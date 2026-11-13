@@ -182,6 +182,10 @@ class OverlayService : Service() {
         stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(210), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         root.addView(stage, LinearLayout.LayoutParams(-1, dp(220)))
 
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         val title = TextView(this).apply {
             text = "아리스"
             textSize = 23f
@@ -192,11 +196,22 @@ class OverlayService : Service() {
                 true
             }
         }
-        root.addView(title)
-        root.addView(Button(this).apply {
-            text = "Gemini 모델 선택"
+        header.addView(title, LinearLayout.LayoutParams(0, dp(44), 1f))
+        val modelButton = TextView(this).apply {
+            text = "AI"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "Gemini 모델 전환"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF315C9B.toInt())
+            }
+            elevation = dp(4).toFloat()
             setOnClickListener { showModelDialog() }
-        })
+        }
+        header.addView(modelButton, LinearLayout.LayoutParams(dp(40), dp(40)))
+        root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
             textSize = 18f
@@ -344,6 +359,7 @@ class OverlayService : Service() {
             textSize = 16f
             setTextColor(Color.WHITE)
             setPadding(dp(12), dp(8), dp(12), dp(8))
+            setTextIsSelectable(true)
             background = rounded(if (fromUser) 0xFF315C9B.toInt() else 0xFF303030.toInt(), dp(16).toFloat())
         }
         val row = LinearLayout(this).apply {
@@ -461,7 +477,7 @@ class OverlayService : Service() {
         val models = arrayOf("gemini-3.8-flash", "gemini-3.5-flash-lite")
         val labels = arrayOf("Gemini 3.8 Flash (기본)", "Gemini 3.5 Flash-Lite (대체)")
         val selected = models.indexOf(getSelectedModel()).coerceAtLeast(0)
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("아리스 응답 모델 선택")
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 modelPreferences().edit().putString("selected_model", models[which]).apply()
@@ -469,7 +485,14 @@ class OverlayService : Service() {
                 dialog.dismiss()
             }
             .setNegativeButton("취소", null)
-            .show()
+            .create()
+        // The assistant runs in an overlay service, so the dialog must use the overlay window type.
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else WindowManager.LayoutParams.TYPE_PHONE
+        )
+        dialog.show()
     }
 
     private fun requestGemini(userText: String, retryCount: Int = 0) {
@@ -560,8 +583,13 @@ class OverlayService : Service() {
             } catch (e: Exception) {
                 handler.post {
                     val errorText = e.message ?: "알 수 없는 오류"
-                    val retryable = errorText.contains("Gemini 오류 (503)") ||
+                    val quotaExhausted = errorText.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                        errorText.contains("quota", ignoreCase = true) ||
+                        errorText.contains("depleted", ignoreCase = true)
+                    val retryable = !quotaExhausted && (
+                        errorText.contains("Gemini 오류 (503)") ||
                         errorText.contains("Gemini 오류 (429)")
+                    )
                     val maxRetries = 3
                     if (retryable && retryCount < maxRetries) {
                         val delayMs = longArrayOf(1000L, 2000L, 4000L)[retryCount]
@@ -573,7 +601,12 @@ class OverlayService : Service() {
                         }, delayMs)
                     } else {
                         (loading.parent as? LinearLayout)?.removeView(loading)
-                        addChatMessage("연결에 실패했습니다. 서버 상세 응답: $errorText", false)
+                        val userHint = if (quotaExhausted) {
+                            "API 사용 한도가 소진된 것 같습니다. Google AI Studio에서 프로젝트의 할당량·요금제 제한을 확인하거나, 모델을 바꿔 다시 시도해 주세요.\n"
+                        } else {
+                            "연결에 실패했습니다.\n"
+                        }
+                        addChatMessage(userHint + "서버 상세 응답: $errorText", false)
                     }
                 }
             } finally {
