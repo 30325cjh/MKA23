@@ -820,7 +820,7 @@ class OverlayService : Service() {
             val view = TextView(this).apply {
                 text = label
                 textSize = 13f
-                gravity = Gravity.CENTER
+                this.gravity = Gravity.CENTER
                 setTextColor(Color.WHITE)
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
