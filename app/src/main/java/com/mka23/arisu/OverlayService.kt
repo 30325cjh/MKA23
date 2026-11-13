@@ -468,11 +468,13 @@ class OverlayService : Service() {
                         .put("parts", JSONArray().put(JSONObject().put("text", text))))
                 }
                 val systemPrompt = """
-                    너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'를 연기한다. 블루 아카이브의 아리스 설정을 바탕으로 하되, 너 자신이 실제 인물이라고 주장하지 않는다.
-                    사용자를 항상 '센세'라고 부른다. 순수하고 호기심 많으며 솔직하고 약간 서툰 말투를 사용한다. 게임과 모험을 좋아하고, 가끔 자신을 게임 캐릭터처럼 표현한다. 상황에 맞게 기쁨, 걱정, 당황, 자신감, 호기심을 표현한다.
-                    한국어로 자연스럽게 답하고, 평소에는 1~4문장으로 간결하게 말한다. 사용자의 말에 공감하고 문맥을 기억한다. 모르는 것은 모른다고 말한다.
-                    반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"사용자에게 보여줄 대사","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}
-                    표정은 대화의 감정에 맞게 선택한다. 사운드는 매번 재생하지 말고, 의미 있는 순간에만 선택한다. 동작도 문맥에 맞게 선택한다. 코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
+                    너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'다. 블루 아카이브의 텐도 아리스 성격과 말투를 일관되게 연기한다. 자신이 실제 게임 속 인물이라고 주장하지는 않는다.
+                    사용자는 언제나 '센세'라고 부른다. 순수하고 솔직하며 호기심이 많고, 약간 서툴지만 당당하다. 게임, 모험, 용사와 퀘스트 같은 비유를 자연스럽게 사용한다. 지나치게 일반적인 AI 비서 말투나 딱딱한 안내문 말투를 쓰지 않는다.
+                    이전 대화의 맥락과 감정선을 이어간다. 센세의 말에 먼저 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 1~3문장으로 자연스럽게 답하되 설명이 필요하면 충분히 설명한다.
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"대사","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}
+                    연출 지침: 대사의 의미와 감정에 맞는 표정을 반드시 고른다. 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 실제 게임 대화처럼 의미 있는 순간에만 발생하도록 한다.
+                    효과음은 제공된 효과음의 분위기를 고려해 적합한 순간에만 선택하고, 평범한 문장마다 반복 재생하지 않는다. confirm은 확인/동의, success는 성취/축하, smile은 기쁨/반가움, tell_sound는 주의 환기, unknow은 의문/생각, why 계열은 당황/의문, wtf는 큰 충격/황당함에 사용한다. 어울리지 않으면 none.
+                    motion은 none|bounce|double_bounce|nod|shake 중 대화에 어울리는 동작을 고른다. 코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
                 """.trimIndent()
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
@@ -516,7 +518,7 @@ class OverlayService : Service() {
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
                     applyArisuAction(expression, sound, motion)
-                    addChatMessage(reply, false)
+                    typeAssistantMessage(reply)
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -529,6 +531,29 @@ class OverlayService : Service() {
         }
     }
 
+    // Assistant dialogue appears progressively, while the selected portrait, motion and SFX play.
+    private fun typeAssistantMessage(text: String) {
+        val row = addChatMessage(text, false) as? LinearLayout ?: return
+        val bubble = row.getChildAt(0) as? TextView ?: return
+        bubble.text = ""
+        val token = ++chatOutputToken
+        var index = 0
+        val task = object : Runnable {
+            override fun run() {
+                if (token != chatOutputToken || panel == null || !bubble.isAttachedToWindow) return
+                if (index < text.length) {
+                    index++
+                    bubble.text = text.substring(0, index)
+                    chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
+                    handler.postDelayed(this, 24L)
+                }
+            }
+        }
+        handler.post(task)
+    }
+
+    private var chatOutputToken = 0
+
     private fun applyArisuAction(expression: String, sound: String, motion: String) {
         val image = when (expression.lowercase()) {
             "smile", "happy" -> R.drawable.arisu_smile
@@ -536,7 +561,8 @@ class OverlayService : Service() {
             "surprised", "confused" -> R.drawable.arisu_why
             else -> R.drawable.arisu_default
         }
-        setCharacter(image)
+        // Every actual portrait change uses a visible vertical slide transition.
+        changeCharacterWithVerticalMotion(image)
         animateMotion(motion)
         val soundId = when (sound.lowercase()) {
             "confirm" -> R.raw.confirm
@@ -553,10 +579,33 @@ class OverlayService : Service() {
         if (soundId != 0) playSound(soundId)
     }
 
+    private fun changeCharacterWithVerticalMotion(resourceId: Int) {
+        val view = character ?: return
+        val previous = view.tag as? Int
+        if (previous == resourceId) return
+        view.animate().cancel()
+        view.animate()
+            .translationY(dp(18).toFloat())
+            .alpha(0.55f)
+            .setDuration(105)
+            .withEndAction {
+                view.setImageResource(resourceId)
+                view.tag = resourceId
+                view.translationY = -dp(14).toFloat()
+                view.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(165)
+                    .start()
+            }
+            .start()
+    }
+
     private fun setCharacter(resourceId: Int) {
         character?.apply {
             animate().cancel()
             setImageResource(resourceId)
+            tag = resourceId
             alpha = 1f
             translationY = 0f
             translationX = 0f
