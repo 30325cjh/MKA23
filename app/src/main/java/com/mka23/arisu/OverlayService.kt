@@ -480,7 +480,7 @@ class OverlayService : Service() {
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
                     .put("contents", contents)
                     .put("generationConfig", JSONObject()
-                        .put("temperature", 0.85)
+                        .put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW"))
                         .put("responseMimeType", "application/json"))
                 // SSE streaming keeps the connection active while Gemini is generating.
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
