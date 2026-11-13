@@ -179,13 +179,10 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(210), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(220)))
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(260)))
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        val header = FrameLayout(this)
         val title = TextView(this).apply {
             text = "아리스"
             textSize = 23f
@@ -196,7 +193,7 @@ class OverlayService : Service() {
                 true
             }
         }
-        header.addView(title, LinearLayout.LayoutParams(0, dp(44), 1f))
+        header.addView(title, FrameLayout.LayoutParams(-1, dp(44), Gravity.CENTER))
         val modelButton = TextView(this).apply {
             text = "AI"
             textSize = 13f
@@ -210,7 +207,8 @@ class OverlayService : Service() {
             elevation = dp(4).toFloat()
             setOnClickListener { showModelDialog() }
         }
-        header.addView(modelButton, LinearLayout.LayoutParams(dp(40), dp(40)))
+        val modelButtonParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.TOP)
+        header.addView(modelButton, modelButtonParams)
         root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
@@ -639,15 +637,17 @@ class OverlayService : Service() {
     private var chatOutputToken = 0
 
     private fun applyArisuAction(expression: String, sound: String, motion: String) {
-        val image = when (expression.lowercase()) {
-            "smile", "happy" -> R.drawable.arisu_smile
-            "confident" -> R.drawable.arisu_jashinmanman
-            "surprised", "confused" -> R.drawable.arisu_why
+        val normalizedExpression = expression.trim().lowercase()
+            .replace("-", "_").replace(" ", "_")
+        val image = when (normalizedExpression) {
+            "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> R.drawable.arisu_smile
+            "confident", "proud", "smug", "determined", "triumphant" -> R.drawable.arisu_jashinmanman
+            "surprised", "confused", "why", "shocked", "angry", "embarrassed", "puzzled" -> R.drawable.arisu_why
+            "default", "normal", "calm", "neutral" -> R.drawable.arisu_default
             else -> R.drawable.arisu_default
         }
-        // Every actual portrait change uses a visible vertical slide transition.
-        changeCharacterWithVerticalMotion(image)
-        animateMotion(motion)
+        // Run portrait transition first; then play body motion so both animations do not compete.
+        changeCharacterWithVerticalMotion(image) { animateMotion(motion) }
         val soundId = when (sound.lowercase()) {
             "confirm" -> R.raw.confirm
             "success" -> R.raw.success
@@ -663,23 +663,33 @@ class OverlayService : Service() {
         if (soundId != 0) playSound(soundId)
     }
 
-    private fun changeCharacterWithVerticalMotion(resourceId: Int) {
-        val view = character ?: return
+    private fun changeCharacterWithVerticalMotion(resourceId: Int, afterTransition: () -> Unit = {}) {
+        val view = character
+        if (view == null) {
+            afterTransition()
+            return
+        }
         val previous = view.tag as? Int
-        if (previous == resourceId) return
         view.animate().cancel()
+        if (previous == resourceId) {
+            view.alpha = 1f
+            view.translationY = 0f
+            afterTransition()
+            return
+        }
         view.animate()
-            .translationY(dp(18).toFloat())
-            .alpha(0.55f)
-            .setDuration(105)
+            .translationY(dp(20).toFloat())
+            .alpha(0.35f)
+            .setDuration(110)
             .withEndAction {
                 view.setImageResource(resourceId)
                 view.tag = resourceId
-                view.translationY = -dp(14).toFloat()
+                view.translationY = -dp(16).toFloat()
                 view.animate()
                     .translationY(0f)
                     .alpha(1f)
-                    .setDuration(165)
+                    .setDuration(190)
+                    .withEndAction { afterTransition() }
                     .start()
             }
             .start()
