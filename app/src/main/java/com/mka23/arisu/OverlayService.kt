@@ -4,7 +4,8 @@ import android.app.*
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.media.MediaPlayer
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -17,7 +18,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Button
-import android.view.ViewGroup
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
@@ -27,7 +27,7 @@ class OverlayService : Service() {
     private var character: ImageView? = null
     private var halo: ImageView? = null
     private var message: TextView? = null
-    private var mediaPlayer: MediaPlayer? = null
+    private var toneGenerator: ToneGenerator? = null
     private var sequenceToken = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -95,7 +95,7 @@ class OverlayService : Service() {
         showCharacterPanel()
         setCharacter(R.drawable.arisu_default)
         message?.text = "연결 완료..."
-        playSound(R.raw.confirm)
+        playSound(false)
 
         handler.postDelayed({
             if (token != sequenceToken || panel == null) return@postDelayed
@@ -114,7 +114,7 @@ class OverlayService : Service() {
                         }?.start()
                 }?.start()
 
-            playSound(R.raw.success)
+            playSound(true)
             message?.text = "선생님! 아이리스, 로그인 성공입니다!"
         }, 950)
     }
@@ -192,13 +192,14 @@ class OverlayService : Service() {
         }.start()
     }
 
-    private fun playSound(resourceId: Int) {
+    // Lightweight built-in tones avoid requiring separate binary audio resources.
+    private fun playSound(success: Boolean) {
         try {
-            mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(this, resourceId)?.apply {
-                setOnCompletionListener { it.release(); if (mediaPlayer === it) mediaPlayer = null }
-                start()
-            }
+            if (toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 75)
+            toneGenerator?.startTone(
+                if (success) ToneGenerator.TONE_PROP_ACK else ToneGenerator.TONE_PROP_BEEP,
+                if (success) 220 else 120
+            )
         } catch (_: Exception) { }
     }
 
@@ -222,8 +223,8 @@ class OverlayService : Service() {
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         closePanel()
         handler.removeCallbacksAndMessages(null)
-        mediaPlayer?.release()
-        mediaPlayer = null
+        toneGenerator?.release()
+        toneGenerator = null
         super.onDestroy()
     }
 }
