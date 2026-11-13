@@ -446,9 +446,11 @@ class OverlayService : Service() {
         }
     }
 
-    private fun requestGemini(userText: String) {
-        conversation.add("user" to userText)
-        while (conversation.size > 16) conversation.removeAt(0)
+    private fun requestGemini(userText: String, retryCount: Int = 0) {
+        if (retryCount == 0) {
+            conversation.add("user" to userText)
+            while (conversation.size > 16) conversation.removeAt(0)
+        }
         val loading = addChatMessage("아리스가 생각 중...", false)
         val key = getApiKey()
         if (key.isNullOrBlank()) {
@@ -542,8 +544,24 @@ class OverlayService : Service() {
                 }
             } catch (e: Exception) {
                 handler.post {
-                    (loading.parent as? LinearLayout)?.removeView(loading)
-                    addChatMessage("연결에 실패했습니다: ${e.message ?: "알 수 없는 오류"}", false)
+                    val errorText = e.message ?: "알 수 없는 오류"
+                    val retryable = errorText.contains("503") ||
+                        errorText.contains("429") ||
+                        errorText.contains("SocketTimeoutException", ignoreCase = true) ||
+                        errorText.contains("timeout", ignoreCase = true)
+                    val maxRetries = if (errorText.contains("503") || errorText.contains("429")) 2 else 1
+                    if (retryable && retryCount < maxRetries) {
+                        val delayMs = if (retryCount == 0) 3000L else 7000L
+                        val statusText = (loading as? LinearLayout)?.getChildAt(0) as? TextView
+                        statusText?.text = "Gemini 서버 응답 지연! ${delayMs / 1000}초 후 자동 재시도합니다... (${retryCount + 1}/${maxRetries})"
+                        handler.postDelayed({
+                            (loading.parent as? LinearLayout)?.removeView(loading)
+                            if (panel != null) requestGemini(userText, retryCount + 1)
+                        }, delayMs)
+                    } else {
+                        (loading.parent as? LinearLayout)?.removeView(loading)
+                        addChatMessage("연결에 실패했습니다: $errorText", false)
+                    }
                 }
             } finally {
                 connection?.disconnect()
