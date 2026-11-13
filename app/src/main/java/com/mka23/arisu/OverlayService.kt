@@ -65,6 +65,14 @@ class OverlayService : Service() {
     private var waitingForTap = false
     private var dialogueStage = 0
     private var typingRunnable: Runnable? = null
+    private var portraitStage: FrameLayout? = null
+    private var assistantDialogueActive = false
+    private var assistantLines: List<JSONObject> = emptyList()
+    private var assistantLineIndex = 0
+    private var assistantFullReply = ""
+    private var recordBubble: TextView? = null
+    private var recordMenu: FrameLayout? = null
+    private var recordingPaused = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -181,8 +189,9 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(500), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(510)))
+        portraitStage = stage
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(260)))
 
         val header = FrameLayout(this)
         val title = TextView(this).apply {
@@ -320,6 +329,14 @@ class OverlayService : Service() {
             waitingForTap = true
             return
         }
+        if (assistantDialogueActive) {
+            if (!waitingForTap) return
+            waitingForTap = false
+            assistantLineIndex++
+            if (assistantLineIndex < assistantLines.size) showAssistantLine()
+            else finishAssistantSequence()
+            return
+        }
         if (!waitingForTap) return
         waitingForTap = false
         when (dialogueStage) {
@@ -369,6 +386,9 @@ class OverlayService : Service() {
     // The input bar keeps its original compact dimensions; chat messages remain SMS-style.
     private fun showChatBar() {
         val root = panel ?: return
+        resizePortrait(false)
+        chatScroll?.visibility = View.VISIBLE
+        chatBar?.visibility = View.VISIBLE
         if (chatBar != null) return
         val messages = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -599,10 +619,13 @@ class OverlayService : Service() {
                     너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'다. 블루 아카이브의 텐도 아리스 성격과 말투를 일관되게 연기한다. 자신이 실제 게임 속 인물이라고 주장하지는 않는다.
                     사용자는 언제나 '센세'라고 부른다. 순수하고 솔직하며 호기심이 많고, 약간 서툴지만 당당하다. 게임, 모험, 용사와 퀘스트 같은 비유를 자연스럽게 사용한다. 지나치게 일반적인 AI 비서 말투나 딱딱한 안내문 말투를 쓰지 않는다.
                     이전 대화의 맥락과 감정선을 이어간다. 센세의 말에 먼저 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 1~3문장으로 자연스럽게 답하되 설명이 필요하면 충분히 설명한다.
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"대사","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}
-                    연출 지침: 대사의 의미와 감정에 맞는 표정을 반드시 고른다. 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 실제 게임 대화처럼 의미 있는 순간에만 발생하도록 한다.
-                    효과음은 제공된 효과음의 분위기를 고려해 적합한 순간에만 선택하고, 평범한 문장마다 반복 재생하지 않는다. confirm은 확인/동의, success는 성취/축하, smile은 기쁨/반가움, tell_sound는 주의 환기, unknow은 의문/생각, why 계열은 당황/의문, wtf는 큰 충격/황당함에 사용한다. 어울리지 않으면 none.
-                    motion은 none|bounce|double_bounce|nod|shake 중 대화에 어울리는 동작을 고른다. 코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"openApp":"","recordScreen":false}
+                    대사를 문장별로 나누어 lines 배열에 넣는다. 한 항목에는 한 문장만 넣고, 각 문장마다 감정에 맞는 표정·효과음·동작을 개별 지정한다. 문장이 여러 개면 순서를 유지한다. reply는 lines의 text를 이어 붙인 전체 대사다.
+                    연출 지침: 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 의미 있는 순간에만 발생하도록 한다.
+                    효과음은 제공된 효과음 분위기에 맞는 순간에만 선택하고 평범한 문장마다 반복 재생하지 않는다. confirm은 확인/동의, success는 성취/축하, smile은 기쁨/반가움, tell_sound는 주의 환기, unknow은 의문/생각, why 계열은 당황/의문, wtf는 큰 충격/황당함에 사용한다. 어울리지 않으면 none.
+                    motion은 none|bounce|double_bounce|nod|shake 중 고른다. openApp은 센세가 현재 메시지에서 앱 실행을 명확히 요청했을 때만 앱 이름을 넣고, 아니면 빈 문자열로 둔다.
+                    recordScreen은 센세가 현재 메시지에서 화면 녹화 시작 또는 녹화 아이콘 표시를 명확히 요청했을 때만 true로 한다. 단순히 녹화를 언급하거나 질문한 경우에는 false다. 녹화 권한 화면을 띄우는 것은 센세가 녹화 시작을 요청했을 때만 한다.
+                    코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
                 """.trimIndent()
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
@@ -648,15 +671,33 @@ class OverlayService : Service() {
                 val action = JSONObject(rawText)
                 val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
                 val openApp = action.optString("openApp", "").trim()
-                val expression = action.optString("expression", "default")
-                val sound = action.optString("sound", "none")
-                val motion = action.optString("motion", "none")
+                val recordScreen = action.optBoolean("recordScreen", false) &&
+                    userText.contains("녹화") &&
+                    (userText.contains("시작") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
+                val lines = mutableListOf<JSONObject>()
+                val linesArray = action.optJSONArray("lines")
+                if (linesArray != null) {
+                    for (i in 0 until linesArray.length()) {
+                        val item = linesArray.optJSONObject(i) ?: continue
+                        if (item.optString("text").isNotBlank()) lines.add(item)
+                    }
+                }
+                if (lines.isEmpty()) {
+                    val parts = reply.split(Regex("(?<=[.!?。！？])\\s+|\\n+")).map { it.trim() }.filter { it.isNotEmpty() }
+                    val fallback = if (parts.isEmpty()) listOf(reply) else parts
+                    fallback.forEach { line ->
+                        lines.add(JSONObject().put("text", line)
+                            .put("expression", action.optString("expression", "default"))
+                            .put("sound", action.optString("sound", "none"))
+                            .put("motion", action.optString("motion", "none")))
+                    }
+                }
                 conversation.add("model" to reply)
                 while (conversation.size > 16) conversation.removeAt(0)
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
-                    applyArisuAction(expression, sound, motion)
-                    typeAssistantMessage(reply)
+                    startAssistantSequence(lines, reply)
+                    if (recordScreen) showRecordingBubble()
                     if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
                 }
             } catch (e: Exception) {
@@ -694,28 +735,150 @@ class OverlayService : Service() {
         }
     }
 
-    // Assistant dialogue appears progressively, while the selected portrait, motion and SFX play.
-    private fun typeAssistantMessage(text: String) {
-        val row = addChatMessage(text, false) as? LinearLayout ?: return
-        val bubble = row.getChildAt(0) as? TextView ?: return
-        bubble.text = ""
-        val token = ++chatOutputToken
-        var index = 0
-        val task = object : Runnable {
-            override fun run() {
-                if (token != chatOutputToken || panel == null || !bubble.isAttachedToWindow) return
-                if (index < text.length) {
-                    index++
-                    bubble.text = text.substring(0, index)
-                    chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
-                    handler.postDelayed(this, 24L)
-                }
-            }
-        }
-        handler.post(task)
+    private fun startAssistantSequence(lines: List<JSONObject>, fullReply: String) {
+        assistantDialogueActive = true
+        assistantLines = lines
+        assistantLineIndex = 0
+        assistantFullReply = fullReply
+        chatScroll?.visibility = View.GONE
+        chatBar?.visibility = View.GONE
+        message?.visibility = View.VISIBLE
+        resizePortrait(true)
+        showAssistantLine()
     }
 
-    private var chatOutputToken = 0
+    private fun showAssistantLine() {
+        val line = assistantLines.getOrNull(assistantLineIndex) ?: return finishAssistantSequence()
+        applyArisuAction(
+            line.optString("expression", "default"),
+            line.optString("sound", "none"),
+            line.optString("motion", "none")
+        )
+        startTypewriter(line.optString("text"))
+    }
+
+    private fun finishAssistantSequence() {
+        assistantDialogueActive = false
+        waitingForTap = false
+        typing = false
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typingRunnable = null
+        message?.visibility = View.GONE
+        resizePortrait(false)
+        chatScroll?.visibility = View.VISIBLE
+        chatBar?.visibility = View.VISIBLE
+        addChatMessage(assistantFullReply, false)
+        assistantLines = emptyList()
+        assistantLineIndex = 0
+        chatInput?.requestFocus()
+    }
+
+    private fun resizePortrait(expanded: Boolean) {
+        val imageHeight = dp(if (expanded) 500 else 250)
+        val stageHeight = dp(if (expanded) 510 else 260)
+        character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
+        portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply { height = stageHeight }
+        panel?.requestLayout()
+        try {
+            val params = panel?.layoutParams as? WindowManager.LayoutParams
+            if (params != null && panel?.isAttachedToWindow == true) windowManager.updateViewLayout(panel, params)
+        } catch (_: Exception) {}
+    }
+
+    private fun showRecordingBubble() {
+        if (recordBubble != null) return
+        val bubble = TextView(this).apply {
+            text = "⏺"
+            textSize = 25f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFFE04444.toInt())
+                setStroke(dp(2), Color.WHITE)
+            }
+            elevation = dp(8).toFloat()
+            contentDescription = "화면 녹화 메뉴"
+            setOnClickListener { toggleRecordingMenu() }
+        }
+        recordBubble = bubble
+        val params = windowParams(dp(56), dp(56), Gravity.TOP or Gravity.END).apply {
+            x = dp(12)
+            y = dp(190)
+        }
+        try { windowManager.addView(bubble, params) } catch (_: Exception) { recordBubble = null }
+    }
+
+    private fun toggleRecordingMenu() {
+        if (recordMenu != null) {
+            try { windowManager.removeView(recordMenu) } catch (_: Exception) {}
+            recordMenu = null
+            return
+        }
+        val menu = FrameLayout(this)
+        fun button(label: String, color: Int, gravity: Int, click: () -> Unit, margin: Int = 0) {
+            val view = TextView(this).apply {
+                text = label
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(color)
+                    setStroke(dp(1), 0xAAFFFFFF.toInt())
+                }
+                elevation = dp(5).toFloat()
+                setOnClickListener { click() }
+            }
+            val lp = FrameLayout.LayoutParams(dp(54), dp(54), gravity)
+            when (gravity) {
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL -> lp.topMargin = dp(margin)
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL -> lp.bottomMargin = dp(margin)
+                Gravity.CENTER_VERTICAL or Gravity.START -> lp.leftMargin = dp(margin)
+                Gravity.CENTER_VERTICAL or Gravity.END -> lp.rightMargin = dp(margin)
+            }
+            menu.addView(view, lp)
+        }
+        button("시작", 0xFF238B57.toInt(), Gravity.TOP or Gravity.CENTER_HORIZONTAL, {
+            try {
+                recordingPaused = false
+                startActivity(Intent(this, ScreenCaptureActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Toast.makeText(this, "화면 녹화를 시작할 수 없어요: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            toggleRecordingMenu()
+        }, 2)
+        button("일시정지", 0xFFB57B22.toInt(), Gravity.CENTER_VERTICAL or Gravity.END, {
+            val action = if (recordingPaused) ScreenRecordService.ACTION_RESUME else ScreenRecordService.ACTION_PAUSE
+            try { startService(Intent(this, ScreenRecordService::class.java).setAction(action)) } catch (_: Exception) {}
+            recordingPaused = !recordingPaused
+            Toast.makeText(this, if (recordingPaused) "녹화를 일시정지했어요." else "녹화를 다시 시작했어요.", Toast.LENGTH_SHORT).show()
+            toggleRecordingMenu()
+        }, 2)
+        button("종료", 0xFFB73535.toInt(), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, {
+            try { startService(Intent(this, ScreenRecordService::class.java).setAction(ScreenRecordService.ACTION_STOP)) } catch (_: Exception) {}
+            recordingPaused = false
+            Toast.makeText(this, "녹화 종료 요청을 보냈어요. 동영상은 Movies/Arisu에 저장됩니다.", Toast.LENGTH_LONG).show()
+            toggleRecordingMenu()
+        }, 2)
+        button("끄기", 0xFF555B66.toInt(), Gravity.CENTER_VERTICAL or Gravity.START, {
+            toggleRecordingMenu()
+            removeRecordingBubble()
+        }, 2)
+        recordMenu = menu
+        val params = windowParams(dp(190), dp(190), Gravity.TOP or Gravity.END).apply {
+            x = dp(4)
+            y = dp(150)
+        }
+        try { windowManager.addView(menu, params) } catch (_: Exception) { recordMenu = null }
+    }
+
+    private fun removeRecordingBubble() {
+        recordMenu?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        recordMenu = null
+        recordBubble?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        recordBubble = null
+    }
 
     private fun launchRequestedApp(requestedName: String) {
         val pm = packageManager
@@ -883,6 +1046,8 @@ class OverlayService : Service() {
         chatScroll = null
         typing = false
         waitingForTap = false
+        assistantDialogueActive = false
+        portraitStage = null
     }
 
     private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
@@ -894,6 +1059,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
+        removeRecordingBubble()
         closePanel()
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
