@@ -3,21 +3,70 @@ package com.mka23.arisu
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.*
 
 class MainActivity : Activity() {
- override fun onCreate(savedInstanceState: Bundle?) {
-  super.onCreate(savedInstanceState)
-  val root=LinearLayout(this).apply { orientation=1; setPadding(24,32,24,24) }
-  root.addView(TextView(this).apply { text="아리스 AI 비서"; textSize=28f })
-  root.addView(TextView(this).apply { text="화면 위에 아리스를 표시하려면 권한을 허용하세요." })
-  val key=EditText(this).apply { hint="Gemini API 키"; singleLine=true; inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD; setText(getSharedPreferences("prefs",0).getString("key","")) }
-  root.addView(key)
-  root.addView(Button(this).apply { text="API 키 저장"; setOnClickListener { getSharedPreferences("prefs",0).edit().putString("key",key.text.toString().trim()).apply(); Toast.makeText(this@MainActivity,"저장 완료",Toast.LENGTH_SHORT).show() } })
-  root.addView(Button(this).apply { text="오버레이 권한 허용"; setOnClickListener { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName"))) } })
-  root.addView(Button(this).apply { text="아리스 시작"; setOnClickListener { if(Settings.canDrawOverlays(this@MainActivity)) { val i=Intent(this@MainActivity,OverlayService::class.java); if(android.os.Build.VERSION.SDK_INT>=26) startForegroundService(i) else startService(i) } else Toast.makeText(this@MainActivity,"먼저 오버레이 권한을 허용하세요.",Toast.LENGTH_LONG).show() } })
-  setContentView(ScrollView(this).apply { addView(root) })
- }
+    private lateinit var status: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 36, 28, 28)
+            setBackgroundColor(0xFFF3F9FF.toInt())
+        }
+        root.addView(TextView(this).apply {
+            text = "아리스 AI 비서"
+            textSize = 28f
+            setTextColor(0xFF17496A.toInt())
+        })
+        root.addView(TextView(this).apply {
+            text = "아리스가 화면 위에 나타나 선생님을 맞이합니다."
+            textSize = 15f
+            setPadding(0, 12, 0, 20)
+        })
+        status = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, 8, 0, 16)
+        }
+        root.addView(status)
+        root.addView(Button(this).apply {
+            text = "화면 위에 표시 권한 허용"
+            setOnClickListener {
+                if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this@MainActivity)) {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                } else {
+                    status.text = "권한이 이미 허용되어 있어요."
+                }
+            }
+        })
+        root.addView(Button(this).apply {
+            text = "아리스 비서 시작"
+            setOnClickListener {
+                if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this@MainActivity)) {
+                    val service = Intent(this@MainActivity, OverlayService::class.java)
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+                    status.text = "아리스가 화면 위에서 대기 중이에요!"
+                } else {
+                    status.text = "먼저 화면 위에 표시 권한을 허용해 주세요."
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                }
+            }
+        })
+        setContentView(root)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::status.isInitialized) {
+            status.text = if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) {
+                "오버레이 권한: 허용됨"
+            } else {
+                "오버레이 권한: 아직 허용되지 않음"
+            }
+        }
+    }
 }
