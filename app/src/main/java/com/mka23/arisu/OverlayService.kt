@@ -193,6 +193,10 @@ class OverlayService : Service() {
             }
         }
         root.addView(title)
+        root.addView(Button(this).apply {
+            text = "Gemini 모델 선택"
+            setOnClickListener { showModelDialog() }
+        })
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
             textSize = 18f
@@ -419,10 +423,10 @@ class OverlayService : Service() {
         return generator.generateKey()
     }
 
-    private fun saveApiKey(value: String) {
+    private fun saveApiKey(value: String) {\n        val cleanValue = value.trim()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        val encrypted = cipher.doFinal(cleanValue.toByteArray(Charsets.UTF_8))
         apiPreferences().edit()
             .putString("api_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString("api_value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
@@ -440,10 +444,31 @@ class OverlayService : Service() {
                 getOrCreateSecretKey(),
                 GCMParameterSpec(128, Base64.decode(ivText, Base64.NO_WRAP))
             )
-            String(cipher.doFinal(Base64.decode(valueText, Base64.NO_WRAP)), Charsets.UTF_8)
+            String(cipher.doFinal(Base64.decode(valueText, Base64.NO_WRAP)), Charsets.UTF_8).trim()
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun modelPreferences() = getSharedPreferences("arisu_model_settings", Context.MODE_PRIVATE)
+
+    private fun getSelectedModel(): String =
+        modelPreferences().getString("selected_model", "gemini-3.8-flash")?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: "gemini-3.8-flash"
+
+    private fun showModelDialog() {
+        val models = arrayOf("gemini-3.8-flash", "gemini-3.5-flash-lite")
+        val labels = arrayOf("Gemini 3.8 Flash (기본)", "Gemini 3.5 Flash-Lite (대체)")
+        val selected = models.indexOf(getSelectedModel()).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("아리스 응답 모델 선택")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                modelPreferences().edit().putString("selected_model", models[which]).apply()
+                Toast.makeText(this, "${labels[which]} 선택 완료", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     private fun requestGemini(userText: String, retryCount: Int = 0) {
@@ -452,7 +477,7 @@ class OverlayService : Service() {
             while (conversation.size > 16) conversation.removeAt(0)
         }
         val loading = addChatMessage("아리스가 생각 중...", false)
-        val key = getApiKey()
+        val key = getApiKey()?.trim()
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
             Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
@@ -484,52 +509,42 @@ class OverlayService : Service() {
                     .put("generationConfig", JSONObject()
                         .put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW"))
                         .put("responseMimeType", "application/json"))
-                // SSE streaming keeps the connection active while Gemini is generating.
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
+                val model = getSelectedModel()
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent"
                 connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 30000
                     readTimeout = 120000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "text/event-stream")
-                    // Google AI Studio authorization keys use x-goog-api-key.
-                    setRequestProperty("x-goog-api-key", key)
+                    setRequestProperty("x-goog-api-key", key.trim())
                 }
                 connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
                 if (status !in 200..299) {
                     val errorStream = connection.errorStream
-                    val errorText = if (errorStream != null) {
+                    val errorJson = if (errorStream != null) {
                         BufferedReader(InputStreamReader(errorStream, Charsets.UTF_8)).use { it.readText() }
-                    } else "서버가 오류 내용을 보내지 않았습니다."
-                    val errorMessage = try {
-                        JSONObject(errorText).optJSONObject("error")?.optString("message") ?: errorText
-                    } catch (_: Exception) { errorText }
-                    throw IllegalStateException("Gemini 오류 ($status): $errorMessage")
+                    } else "{\"error\":{\"message\":\"서버가 오류 본문을 보내지 않았습니다.\"}}"
+                    throw IllegalStateException("Gemini 오류 ($status): $errorJson")
                 }
 
-                // Each SSE data event contains a partial GenerateContentResponse.
-                // Join text fragments before parsing the final JSON action object.
+                val responseJson = BufferedReader(
+                    InputStreamReader(connection.inputStream, Charsets.UTF_8)
+                ).use { it.readText() }
+                val response = JSONObject(responseJson)
+                val candidates = response.optJSONArray("candidates")
+                    ?: throw IllegalStateException("Gemini 응답에 candidates가 없습니다: $responseJson")
+                val responseParts = candidates.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?: throw IllegalStateException("Gemini 응답에 텍스트가 없습니다: $responseJson")
                 val rawTextBuilder = StringBuilder()
-                BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        val eventLine = line ?: continue
-                        if (!eventLine.startsWith("data:")) continue
-                        val eventData = eventLine.substringAfter("data:").trim()
-                        if (eventData.isEmpty() || eventData == "[DONE]") continue
-                        val eventJson = try { JSONObject(eventData) } catch (_: Exception) { continue }
-                        val eventParts = eventJson.optJSONArray("candidates")
-                            ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                            ?: continue
-                        for (i in 0 until eventParts.length()) {
-                            rawTextBuilder.append(eventParts.optJSONObject(i)?.optString("text").orEmpty())
-                        }
-                    }
+                for (i in 0 until responseParts.length()) {
+                    rawTextBuilder.append(responseParts.optJSONObject(i)?.optString("text").orEmpty())
                 }
                 val rawText = rawTextBuilder.toString().trim()
-                if (rawText.isEmpty()) throw IllegalStateException("Gemini 스트리밍 응답이 비어 있습니다.")
+                if (rawText.isEmpty()) throw IllegalStateException("Gemini 응답 텍스트가 비어 있습니다.")
                 val action = JSONObject(rawText)
                 val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
                 val expression = action.optString("expression", "default")
@@ -545,22 +560,20 @@ class OverlayService : Service() {
             } catch (e: Exception) {
                 handler.post {
                     val errorText = e.message ?: "알 수 없는 오류"
-                    val retryable = errorText.contains("503") ||
-                        errorText.contains("429") ||
-                        errorText.contains("SocketTimeoutException", ignoreCase = true) ||
-                        errorText.contains("timeout", ignoreCase = true)
-                    val maxRetries = if (errorText.contains("503") || errorText.contains("429")) 2 else 1
+                    val retryable = errorText.contains("Gemini 오류 (503)") ||
+                        errorText.contains("Gemini 오류 (429)")
+                    val maxRetries = 3
                     if (retryable && retryCount < maxRetries) {
-                        val delayMs = if (retryCount == 0) 3000L else 7000L
+                        val delayMs = longArrayOf(1000L, 2000L, 4000L)[retryCount]
                         val statusText = (loading as? LinearLayout)?.getChildAt(0) as? TextView
-                        statusText?.text = "Gemini 서버 응답 지연! ${delayMs / 1000}초 후 자동 재시도합니다... (${retryCount + 1}/${maxRetries})"
+                        statusText?.text = "Gemini 서버 혼잡! ${delayMs / 1000}초 후 재시도합니다... (${retryCount + 1}/3)"
                         handler.postDelayed({
                             (loading.parent as? LinearLayout)?.removeView(loading)
                             if (panel != null) requestGemini(userText, retryCount + 1)
                         }, delayMs)
                     } else {
                         (loading.parent as? LinearLayout)?.removeView(loading)
-                        addChatMessage("연결에 실패했습니다: $errorText", false)
+                        addChatMessage("연결에 실패했습니다. 서버 상세 응답: $errorText", false)
                     }
                 }
             } finally {
