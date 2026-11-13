@@ -165,7 +165,7 @@ class OverlayService : Service() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(21), dp(18), dp(21), dp(18))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             background = rounded(Color.BLACK, dp(22).toFloat())
             elevation = dp(16).toFloat()
         }
@@ -179,12 +179,12 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(525), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(548)))
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(210), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(220)))
 
         val title = TextView(this).apply {
             text = "아리스"
-            textSize = 27f
+            textSize = 23f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setOnLongClickListener {
@@ -195,10 +195,10 @@ class OverlayService : Service() {
         root.addView(title)
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
-            textSize = 22.5f
+            textSize = 18f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(dp(6), dp(10), dp(6), dp(10))
+            setPadding(dp(6), dp(4), dp(6), dp(4))
             setOnClickListener { handleDialogueTap() }
         }
         root.addView(message)
@@ -285,7 +285,7 @@ class OverlayService : Service() {
             addView(messages, FrameLayout.LayoutParams(-1, FrameLayout.LayoutParams.WRAP_CONTENT))
         }
         chatScroll = history
-        root.addView(history, LinearLayout.LayoutParams(-1, dp(140)))
+        root.addView(history, LinearLayout.LayoutParams(-1, dp(90)))
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
