@@ -673,7 +673,7 @@ class OverlayService : Service() {
                 val openApp = action.optString("openApp", "").trim()
                 val recordScreen = action.optBoolean("recordScreen", false) &&
                     userText.contains("녹화") &&
-                    (userText.contains("시작") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
+                    (userText.contains("시작") || userText.contains("사작") || userText.contains("해달") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
                 val lines = mutableListOf<JSONObject>()
                 val linesArray = action.optJSONArray("lines")
                 if (linesArray != null) {
@@ -774,8 +774,10 @@ class OverlayService : Service() {
     }
 
     private fun resizePortrait(expanded: Boolean) {
-        val imageHeight = dp(if (expanded) 500 else 250)
-        val stageHeight = dp(if (expanded) 510 else 260)
+        val availableHeightDp = (resources.displayMetrics.heightPixels / resources.displayMetrics.density).toInt()
+        val expandedImageDp = (availableHeightDp - 170).coerceIn(300, 500)
+        val imageHeight = dp(if (expanded) expandedImageDp else 250)
+        val stageHeight = dp(if (expanded) expandedImageDp + 10 else 260)
         character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
         portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply { height = stageHeight }
         panel?.requestLayout()
