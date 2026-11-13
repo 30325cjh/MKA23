@@ -19,6 +19,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.ScrollView
 import android.widget.Button
 
 class OverlayService : Service() {
@@ -29,7 +30,7 @@ class OverlayService : Service() {
     private var character: ImageView? = null
     private var message: TextView? = null
     private var chatBar: LinearLayout? = null
-    private var chatLog: TextView? = null
+    private var chatLog: LinearLayout? = null
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
     private var sequenceToken = 0
@@ -140,7 +141,7 @@ class OverlayService : Service() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(21), dp(18), dp(21), dp(18))
             background = rounded(Color.BLACK, dp(22).toFloat())
             elevation = dp(16).toFloat()
         }
@@ -154,19 +155,19 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(350), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(365)))
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(525), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(548)))
 
         val title = TextView(this).apply {
             text = "아리스"
-            textSize = 18f
+            textSize = 27f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }
         root.addView(title)
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
-            textSize = 15f
+            textSize = 22.5f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setPadding(dp(6), dp(10), dp(6), dp(10))
@@ -178,7 +179,7 @@ class OverlayService : Service() {
             setOnClickListener { closePanel() }
         })
         panel = root
-        val panelWidth = minOf(dp(440), resources.displayMetrics.widthPixels - dp(28))
+        val panelWidth = minOf(dp(660), resources.displayMetrics.widthPixels - dp(28))
         val params = windowParams(panelWidth, WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             y = dp(18)
             // The panel must be focusable so the final chat field can open the keyboard.
@@ -247,44 +248,72 @@ class OverlayService : Service() {
     private fun showChatBar() {
         val root = panel ?: return
         if (chatBar != null) return
-        val log = TextView(this).apply {
-            textSize = 13f
-            setTextColor(Color.WHITE)
+        val messages = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        chatLog = log
-        root.addView(log, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
-
+        chatLog = messages
+        val history = ScrollView(this).apply {
+            isFillViewport = true
+            background = rounded(0xFF151515.toInt(), dp(14).toFloat())
+            addView(messages, ScrollView.LayoutParams(-1, ScrollView.LayoutParams.WRAP_CONTENT))
+        }
+        root.addView(history, LinearLayout.LayoutParams(-1, dp(140)))
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(12), 0, 0)
         }
         val input = EditText(this).apply {
             hint = "아리스에게 메시지 입력..."
             setHintTextColor(0xFFAAAAAA.toInt())
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 21f
             setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
-            background = rounded(0xFF242424.toInt(), dp(12).toFloat())
-            setPadding(dp(10), 0, dp(10), 0)
+            background = rounded(0xFF242424.toInt(), dp(18).toFloat())
+            setPadding(dp(15), 0, dp(15), 0)
         }
         chatInput = input
-        bar.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+        bar.addView(input, LinearLayout.LayoutParams(0, dp(66), 1f))
         bar.addView(Button(this).apply {
             text = "전송"
+            textSize = 18f
             setOnClickListener {
                 val typedText = input.text.toString().trim()
                 if (typedText.isNotEmpty()) {
-                    log.text = if (log.text.isNullOrEmpty()) "센세: $typedText" else log.text.toString() + "\n센세: $typedText"
+                    addChatMessage(typedText, true)
                     input.text.clear()
                 }
             }
-        }, LinearLayout.LayoutParams(dp(68), dp(48)))
+        }, LinearLayout.LayoutParams(dp(96), dp(66)))
         chatBar = bar
         root.addView(bar)
         root.requestFocus()
+    }
+
+    private fun addChatMessage(text: String, fromUser: Boolean) {
+        val messages = chatLog ?: return
+        val bubble = TextView(this).apply {
+            this.text = text
+            textSize = 19f
+            setTextColor(Color.WHITE)
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            background = rounded(if (fromUser) 0xFF315C9B.toInt() else 0xFF303030.toInt(), dp(18).toFloat())
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (fromUser) Gravity.END else Gravity.START
+            setPadding(dp(4), dp(5), dp(4), dp(5))
+            addView(bubble, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        messages.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
+        (messages.parent as? ScrollView)?.post {
+            (messages.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN)
+        }
     }
 
     private fun setCharacter(resourceId: Int) {
