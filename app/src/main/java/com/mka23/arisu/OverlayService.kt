@@ -27,7 +27,6 @@ class OverlayService : Service() {
     private var bubble: ImageView? = null
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
-    private var halo: ImageView? = null
     private var message: TextView? = null
     private var chatBar: LinearLayout? = null
     private var chatLog: TextView? = null
@@ -124,13 +123,12 @@ class OverlayService : Service() {
         }
         handler.postDelayed({
             if (token != sequenceToken || panel == null) return@postDelayed
-            setCharacter(R.drawable.arisu_smile) {
-                animateBounce(1) {
-                    playSound(R.raw.success)
-                    dialogueStage = 1
-                    startTypewriter("로그인 성공!")
-                }
-            }
+            // Start the expression change, motion, sound and voice line in the same frame.
+            setCharacter(R.drawable.arisu_smile)
+            animateBounce(1)
+            playSound(R.raw.success)
+            dialogueStage = 1
+            startTypewriter("로그인 성공!")
         }, 1750L)
     }
 
@@ -149,14 +147,6 @@ class OverlayService : Service() {
         val stage = FrameLayout(this).apply {
             setOnClickListener { handleDialogueTap() }
         }
-        val haloView = ImageView(this).apply {
-            setImageResource(R.drawable.arisu_halo)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            isClickable = true
-            setOnClickListener { handleDialogueTap() }
-        }
-        halo = haloView
-        stage.addView(haloView, FrameLayout.LayoutParams(dp(92), dp(92), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         val portrait = ImageView(this).apply {
             setImageResource(R.drawable.arisu_default)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -164,8 +154,8 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(270), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(285)))
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(350), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(365)))
 
         val title = TextView(this).apply {
             text = "아리스"
@@ -188,13 +178,13 @@ class OverlayService : Service() {
             setOnClickListener { closePanel() }
         })
         panel = root
-        val params = windowParams(dp(330), WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+        val panelWidth = minOf(dp(440), resources.displayMetrics.widthPixels - dp(28))
+        val params = windowParams(panelWidth, WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             y = dp(18)
             // The panel must be focusable so the final chat field can open the keyboard.
             flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         }
         windowManager.addView(root, params)
-        animateHalo()
     }
 
     private fun handleDialogueTap() {
@@ -210,22 +200,20 @@ class OverlayService : Service() {
         waitingForTap = false
         when (dialogueStage) {
             1 -> {
-                setCharacter(R.drawable.arisu_default) {
-                    animateBounce(2) {
-                        playSound(R.raw.smile)
-                        dialogueStage = 2
-                        startTypewriter("반갑습니다, 센세!")
-                    }
-                }
+                // These four actions intentionally begin together, not after the motion ends.
+                setCharacter(R.drawable.arisu_default)
+                animateBounce(2)
+                playSound(R.raw.smile)
+                dialogueStage = 2
+                startTypewriter("반갑습니다, 센세!")
             }
             2 -> {
-                setCharacter(R.drawable.arisu_jashinmanman) {
-                    animateBounce(1) {
-                        playSound(R.raw.why)
-                        dialogueStage = 3
-                        startTypewriter("명령을 내려주세요!")
-                    }
-                }
+                // These four actions intentionally begin together, not after the motion ends.
+                setCharacter(R.drawable.arisu_jashinmanman)
+                animateBounce(1)
+                playSound(R.raw.why)
+                dialogueStage = 3
+                startTypewriter("명령을 내려주세요!")
             }
             3 -> showChatBar()
         }
@@ -299,37 +287,23 @@ class OverlayService : Service() {
         root.requestFocus()
     }
 
-    private fun animateHalo() {
-        val view = halo ?: return
-        view.animate().translationY(-dp(3).toFloat()).setDuration(700).withEndAction {
-            view.animate().translationY(dp(3).toFloat()).setDuration(700).withEndAction {
-                if (panel != null && panel?.visibility == View.VISIBLE) animateHalo()
-            }.start()
-        }.start()
+    private fun setCharacter(resourceId: Int) {
+        // Swap the artwork immediately; any movement starts in the same UI frame.
+        character?.apply {
+            animate().cancel()
+            setImageResource(resourceId)
+            alpha = 1f
+            translationY = 0f
+        }
     }
 
-    private fun setCharacter(resourceId: Int, onComplete: (() -> Unit)? = null) {
+    private fun animateBounce(count: Int) {
         val view = character ?: return
-        view.animate().cancel()
-        view.animate().alpha(0f).translationY(dp(10).toFloat()).setDuration(120).withEndAction {
-            view.setImageResource(resourceId)
-            view.translationY = -dp(10).toFloat()
-            view.animate().alpha(1f).translationY(0f).setDuration(170).withEndAction {
-                onComplete?.invoke()
-            }.start()
-        }.start()
-    }
-
-    private fun animateBounce(count: Int, onComplete: () -> Unit) {
-        val view = character ?: run { onComplete(); return }
         fun oneBounce(remaining: Int) {
-            if (remaining <= 0) {
-                onComplete()
-                return
-            }
+            if (remaining <= 0) return
             view.animate().cancel()
-            view.animate().translationY(-dp(12).toFloat()).setDuration(95).withEndAction {
-                view.animate().translationY(dp(5).toFloat()).setDuration(85).withEndAction {
+            view.animate().translationY(-dp(15).toFloat()).setDuration(95).withEndAction {
+                view.animate().translationY(dp(6).toFloat()).setDuration(85).withEndAction {
                     view.animate().translationY(0f).setDuration(90).withEndAction {
                         oneBounce(remaining - 1)
                     }.start()
@@ -363,7 +337,6 @@ class OverlayService : Service() {
         panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         panel = null
         character = null
-        halo = null
         message = null
         chatBar = null
         chatInput = null
