@@ -4,8 +4,7 @@ import android.app.*
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -27,7 +26,7 @@ class OverlayService : Service() {
     private var character: ImageView? = null
     private var halo: ImageView? = null
     private var message: TextView? = null
-    private var toneGenerator: ToneGenerator? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var sequenceToken = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -99,7 +98,7 @@ class OverlayService : Service() {
 
         handler.postDelayed({
             if (token != sequenceToken || panel == null) return@postDelayed
-            setCharacter(R.drawable.arisu_smile)
+            setCharacter(R.drawable.arisu_big_smile)
             character?.animate()?.cancel()
             character?.translationY = 0f
             character?.animate()
@@ -192,15 +191,25 @@ class OverlayService : Service() {
         }.start()
     }
 
-    // Lightweight built-in tones avoid requiring separate binary audio resources.
+    // Play the original sound files uploaded to res/raw.
     private fun playSound(success: Boolean) {
         try {
-            if (toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 75)
-            toneGenerator?.startTone(
-                if (success) ToneGenerator.TONE_PROP_ACK else ToneGenerator.TONE_PROP_BEEP,
-                if (success) 220 else 120
-            )
-        } catch (_: Exception) { }
+            mediaPlayer?.setOnCompletionListener(null)
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(
+                this,
+                if (success) R.raw.success else R.raw.confirm
+            )?.apply {
+                setOnCompletionListener { player ->
+                    player.release()
+                    if (mediaPlayer === player) mediaPlayer = null
+                }
+                start()
+            }
+        } catch (_: Exception) {
+            mediaPlayer?.release()
+            mediaPlayer = null
+        }
     }
 
     private fun closePanel() {
@@ -223,8 +232,8 @@ class OverlayService : Service() {
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         closePanel()
         handler.removeCallbacksAndMessages(null)
-        toneGenerator?.release()
-        toneGenerator = null
+        mediaPlayer?.release()
+        mediaPlayer = null
         super.onDestroy()
     }
 }
