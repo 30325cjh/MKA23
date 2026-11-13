@@ -507,7 +507,6 @@ class OverlayService : Service() {
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
                     .put("contents", contents)
                     .put("generationConfig", JSONObject()
-                        .put("thinkingConfig", JSONObject().put("thinkingLevel", "LOW"))
                         .put("responseMimeType", "application/json"))
                 val model = getSelectedModel()
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent"
