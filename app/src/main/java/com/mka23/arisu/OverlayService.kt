@@ -277,7 +277,7 @@ class OverlayService : Service() {
             setHintTextColor(0xFFAAAAAA.toInt())
             setTextColor(Color.WHITE)
             textSize = 14f
-            singleLine = true
+            setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
             background = rounded(0xFF242424.toInt(), dp(12).toFloat())
             setPadding(dp(10), 0, dp(10), 0)
