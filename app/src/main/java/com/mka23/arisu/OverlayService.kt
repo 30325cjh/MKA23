@@ -482,33 +482,52 @@ class OverlayService : Service() {
                     .put("generationConfig", JSONObject()
                         .put("temperature", 0.85)
                         .put("responseMimeType", "application/json"))
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+                // SSE streaming keeps the connection active while Gemini is generating.
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
                 connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 20000
-                    readTimeout = 45000
+                    connectTimeout = 30000
+                    readTimeout = 120000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    // New Google AI Studio AQ. Authentication Keys are sent in this header.
+                    setRequestProperty("Accept", "text/event-stream")
+                    // Google AI Studio authorization keys use x-goog-api-key.
                     setRequestProperty("x-goog-api-key", key)
                 }
                 connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
-                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-                val responseText = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
                 if (status !in 200..299) {
+                    val errorStream = connection.errorStream
+                    val errorText = if (errorStream != null) {
+                        BufferedReader(InputStreamReader(errorStream, Charsets.UTF_8)).use { it.readText() }
+                    } else "서버가 오류 내용을 보내지 않았습니다."
                     val errorMessage = try {
-                        JSONObject(responseText).optJSONObject("error")?.optString("message") ?: responseText
-                    } catch (_: Exception) { responseText }
+                        JSONObject(errorText).optJSONObject("error")?.optString("message") ?: errorText
+                    } catch (_: Exception) { errorText }
                     throw IllegalStateException("Gemini 오류 ($status): $errorMessage")
                 }
-                val responseJson = JSONObject(responseText)
-                val parts = responseJson.optJSONArray("candidates")
-                    ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
-                    ?: throw IllegalStateException("Gemini 응답이 비어 있습니다.")
-                val rawText = buildString {
-                    for (i in 0 until parts.length()) append(parts.optJSONObject(i)?.optString("text").orEmpty())
-                }.trim()
+
+                // Each SSE data event contains a partial GenerateContentResponse.
+                // Join text fragments before parsing the final JSON action object.
+                val rawTextBuilder = StringBuilder()
+                BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        val eventLine = line ?: continue
+                        if (!eventLine.startsWith("data:")) continue
+                        val eventData = eventLine.substringAfter("data:").trim()
+                        if (eventData.isEmpty() || eventData == "[DONE]") continue
+                        val eventJson = try { JSONObject(eventData) } catch (_: Exception) { continue }
+                        val eventParts = eventJson.optJSONArray("candidates")
+                            ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                            ?: continue
+                        for (i in 0 until eventParts.length()) {
+                            rawTextBuilder.append(eventParts.optJSONObject(i)?.optString("text").orEmpty())
+                        }
+                    }
+                }
+                val rawText = rawTextBuilder.toString().trim()
+                if (rawText.isEmpty()) throw IllegalStateException("Gemini 스트리밍 응답이 비어 있습니다.")
                 val action = JSONObject(rawText)
                 val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
                 val expression = action.optString("expression", "default")
