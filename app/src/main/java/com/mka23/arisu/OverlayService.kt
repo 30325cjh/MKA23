@@ -423,7 +423,8 @@ class OverlayService : Service() {
         return generator.generateKey()
     }
 
-    private fun saveApiKey(value: String) {\n        val cleanValue = value.trim()
+    private fun saveApiKey(value: String) {
+        val cleanValue = value.trim()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
         val encrypted = cipher.doFinal(cleanValue.toByteArray(Charsets.UTF_8))
