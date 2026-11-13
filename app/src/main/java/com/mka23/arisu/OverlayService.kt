@@ -258,7 +258,7 @@ class OverlayService : Service() {
         val history = ScrollView(this).apply {
             isFillViewport = true
             background = rounded(0xFF151515.toInt(), dp(14).toFloat())
-            addView(messages, ScrollView.LayoutParams(-1, ScrollView.LayoutParams.WRAP_CONTENT))
+            addView(messages, FrameLayout.LayoutParams(-1, FrameLayout.LayoutParams.WRAP_CONTENT))
         }
         root.addView(history, LinearLayout.LayoutParams(-1, dp(140)))
         val bar = LinearLayout(this).apply {
