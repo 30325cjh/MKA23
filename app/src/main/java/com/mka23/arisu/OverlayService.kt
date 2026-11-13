@@ -1,8 +1,7 @@
 package com.mka23.arisu
 
-import com.mka23.arisu.R
-
 import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -12,29 +11,51 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Button
+import android.widget.Toast
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.KeyStore
+import java.util.concurrent.Executors
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private val handler = Handler(Looper.getMainLooper())
+    private val networkExecutor = Executors.newSingleThreadExecutor()
     private var bubble: ImageView? = null
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
     private var message: TextView? = null
     private var chatBar: LinearLayout? = null
     private var chatLog: LinearLayout? = null
+    private var chatScroll: ScrollView? = null
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
+    private val conversation = mutableListOf<Pair<String, String>>()
     private var sequenceToken = 0
     private var currentLine = ""
     private var charIndex = 0
@@ -113,6 +134,8 @@ class OverlayService : Service() {
         chatBar = null
         chatInput = null
         chatLog = null
+        chatScroll = null
+        conversation.clear()
 
         setCharacter(R.drawable.arisu_default)
         message?.text = "아리스 연결중○○○"
@@ -126,9 +149,8 @@ class OverlayService : Service() {
         }
         handler.postDelayed({
             if (token != sequenceToken || panel == null) return@postDelayed
-            // Start the expression change, motion, sound and voice line in the same frame.
             setCharacter(R.drawable.arisu_smile)
-            animateBounce(1)
+            animateMotion("bounce")
             playSound(R.raw.success)
             dialogueStage = 1
             startTypewriter("로그인 성공!")
@@ -165,6 +187,10 @@ class OverlayService : Service() {
             textSize = 27f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+            setOnLongClickListener {
+                showApiKeyDialog()
+                true
+            }
         }
         root.addView(title)
         message = TextView(this).apply {
@@ -184,7 +210,6 @@ class OverlayService : Service() {
         val panelWidth = minOf(dp(660), resources.displayMetrics.widthPixels - dp(28))
         val params = windowParams(panelWidth, WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             y = dp(18)
-            // The panel must be focusable so the final chat field can open the keyboard.
             flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         }
         windowManager.addView(root, params)
@@ -203,17 +228,15 @@ class OverlayService : Service() {
         waitingForTap = false
         when (dialogueStage) {
             1 -> {
-                // These four actions intentionally begin together, not after the motion ends.
                 setCharacter(R.drawable.arisu_default)
-                animateBounce(2)
+                animateMotion("double_bounce")
                 playSound(R.raw.smile)
                 dialogueStage = 2
                 startTypewriter("반갑습니다, 센세!")
             }
             2 -> {
-                // These four actions intentionally begin together, not after the motion ends.
                 setCharacter(R.drawable.arisu_jashinmanman)
-                animateBounce(1)
+                animateMotion("bounce")
                 playSound(R.raw.why)
                 dialogueStage = 3
                 startTypewriter("명령을 내려주세요!")
@@ -247,6 +270,7 @@ class OverlayService : Service() {
         handler.post(task)
     }
 
+    // The input bar keeps its original compact dimensions; chat messages remain SMS-style.
     private fun showChatBar() {
         val root = panel ?: return
         if (chatBar != null) return
@@ -260,71 +284,301 @@ class OverlayService : Service() {
             background = rounded(0xFF151515.toInt(), dp(14).toFloat())
             addView(messages, FrameLayout.LayoutParams(-1, FrameLayout.LayoutParams.WRAP_CONTENT))
         }
+        chatScroll = history
         root.addView(history, LinearLayout.LayoutParams(-1, dp(140)))
+
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, 0)
+            setPadding(0, dp(8), 0, 0)
         }
         val input = EditText(this).apply {
             hint = "아리스에게 메시지 입력..."
             setHintTextColor(0xFFAAAAAA.toInt())
             setTextColor(Color.WHITE)
-            textSize = 21f
+            textSize = 14f
             setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEND
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
-            background = rounded(0xFF242424.toInt(), dp(18).toFloat())
-            setPadding(dp(15), 0, dp(15), 0)
+            background = rounded(0xFF242424.toInt(), dp(12).toFloat())
+            setPadding(dp(10), 0, dp(10), 0)
         }
         chatInput = input
-        bar.addView(input, LinearLayout.LayoutParams(0, dp(66), 1f))
-        bar.addView(Button(this).apply {
+        bar.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val sendButton = Button(this).apply {
             text = "전송"
-            textSize = 18f
-            setOnClickListener {
-                val typedText = input.text.toString().trim()
-                if (typedText.isNotEmpty()) {
-                    addChatMessage(typedText, true)
-                    input.text.clear()
-                }
-            }
-        }, LinearLayout.LayoutParams(dp(96), dp(66)))
+            setOnClickListener { submitChatMessage() }
+        }
+        bar.addView(sendButton, LinearLayout.LayoutParams(dp(68), dp(48)))
+        input.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_SEND ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)) {
+                submitChatMessage()
+                true
+            } else false
+        }
         chatBar = bar
         root.addView(bar)
         root.requestFocus()
     }
 
-    private fun addChatMessage(text: String, fromUser: Boolean) {
-        val messages = chatLog ?: return
+    private fun submitChatMessage() {
+        val input = chatInput ?: return
+        val text = input.text.toString().trim()
+        if (text.isEmpty()) return
+        input.text.clear()
+        ensureApiKey {
+            addChatMessage(text, true)
+            requestGemini(text)
+        }
+    }
+
+    private fun addChatMessage(text: String, fromUser: Boolean): View {
+        val messages = chatLog ?: return TextView(this)
         val bubble = TextView(this).apply {
             this.text = text
-            textSize = 19f
+            textSize = 16f
             setTextColor(Color.WHITE)
-            setPadding(dp(16), dp(11), dp(16), dp(11))
-            background = rounded(if (fromUser) 0xFF315C9B.toInt() else 0xFF303030.toInt(), dp(18).toFloat())
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = rounded(if (fromUser) 0xFF315C9B.toInt() else 0xFF303030.toInt(), dp(16).toFloat())
         }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (fromUser) Gravity.END else Gravity.START
-            setPadding(dp(4), dp(5), dp(4), dp(5))
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             addView(bubble, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ))
         }
         messages.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
-        (messages.parent as? ScrollView)?.post {
-            (messages.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN)
+        chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
+        return row
+    }
+
+    private fun ensureApiKey(onReady: () -> Unit) {
+        if (!getApiKey().isNullOrBlank()) {
+            onReady()
+        } else {
+            showApiKeyDialog(onReady)
         }
     }
 
+    private fun showApiKeyDialog(onSaved: (() -> Unit)? = null) {
+        val input = EditText(this).apply {
+            hint = "AIza..."
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+            setText(getApiKey().orEmpty())
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Gemini API 키")
+            .setMessage("Google AI Studio에서 발급한 API 키를 입력하세요. 키는 이 기기에 암호화해 저장합니다.")
+            .setView(input)
+            .setNegativeButton("취소", null)
+            .setPositiveButton("저장", null)
+            .create()
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val key = input.text.toString().trim()
+                if (key.length < 20) {
+                    input.error = "올바른 API 키를 입력해주세요."
+                } else {
+                    try {
+                        saveApiKey(key)
+                        dialog.dismiss()
+                        Toast.makeText(this, "Gemini API 키 저장 완료", Toast.LENGTH_SHORT).show()
+                        onSaved?.invoke()
+                    } catch (e: Exception) {
+                        input.error = "키 저장 실패: ${e.message}"
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun apiPreferences() = getSharedPreferences("arisu_secure_settings", Context.MODE_PRIVATE)
+
+    private fun getOrCreateSecretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val alias = "arisu_gemini_api_key"
+        if (keyStore.containsAlias(alias)) return keyStore.getKey(alias, null) as SecretKey
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                alias,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun saveApiKey(value: String) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        apiPreferences().edit()
+            .putString("api_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString("api_value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .apply()
+    }
+
+    private fun getApiKey(): String? {
+        return try {
+            val prefs = apiPreferences()
+            val ivText = prefs.getString("api_iv", null) ?: return null
+            val valueText = prefs.getString("api_value", null) ?: return null
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                getOrCreateSecretKey(),
+                GCMParameterSpec(128, Base64.decode(ivText, Base64.NO_WRAP))
+            )
+            String(cipher.doFinal(Base64.decode(valueText, Base64.NO_WRAP)), Charsets.UTF_8)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun requestGemini(userText: String) {
+        conversation.add("user" to userText)
+        while (conversation.size > 16) conversation.removeAt(0)
+        val loading = addChatMessage("아리스가 생각 중...", false)
+        val key = getApiKey()
+        if (key.isNullOrBlank()) {
+            (loading.parent as? LinearLayout)?.removeView(loading)
+            Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
+            showApiKeyDialog { requestGemini(userText) }
+            return
+        }
+
+        networkExecutor.execute {
+            var connection: HttpURLConnection? = null
+            try {
+                val contents = JSONArray()
+                conversation.forEach { (role, text) ->
+                    contents.put(JSONObject()
+                        .put("role", role)
+                        .put("parts", JSONArray().put(JSONObject().put("text", text))))
+                }
+                val systemPrompt = """
+                    너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'를 연기한다. 블루 아카이브의 아리스 설정을 바탕으로 하되, 너 자신이 실제 인물이라고 주장하지 않는다.
+                    사용자를 항상 '센세'라고 부른다. 순수하고 호기심 많으며 솔직하고 약간 서툰 말투를 사용한다. 게임과 모험을 좋아하고, 가끔 자신을 게임 캐릭터처럼 표현한다. 상황에 맞게 기쁨, 걱정, 당황, 자신감, 호기심을 표현한다.
+                    한국어로 자연스럽게 답하고, 평소에는 1~4문장으로 간결하게 말한다. 사용자의 말에 공감하고 문맥을 기억한다. 모르는 것은 모른다고 말한다.
+                    반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"사용자에게 보여줄 대사","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}
+                    표정은 대화의 감정에 맞게 선택한다. 사운드는 매번 재생하지 말고, 의미 있는 순간에만 선택한다. 동작도 문맥에 맞게 선택한다. 코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
+                """.trimIndent()
+                val body = JSONObject()
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
+                    .put("contents", contents)
+                    .put("generationConfig", JSONObject()
+                        .put("temperature", 0.85)
+                        .put("responseMimeType", "application/json"))
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" +
+                    URLEncoder.encode(key, "UTF-8")
+                connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 20000
+                    readTimeout = 45000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                }
+                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                val responseText = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+                if (status !in 200..299) {
+                    val errorMessage = try {
+                        JSONObject(responseText).optJSONObject("error")?.optString("message") ?: responseText
+                    } catch (_: Exception) { responseText }
+                    throw IllegalStateException("Gemini 오류 ($status): $errorMessage")
+                }
+                val responseJson = JSONObject(responseText)
+                val parts = responseJson.optJSONArray("candidates")
+                    ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                    ?: throw IllegalStateException("Gemini 응답이 비어 있습니다.")
+                val rawText = buildString {
+                    for (i in 0 until parts.length()) append(parts.optJSONObject(i)?.optString("text").orEmpty())
+                }.trim()
+                val action = JSONObject(rawText)
+                val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
+                val expression = action.optString("expression", "default")
+                val sound = action.optString("sound", "none")
+                val motion = action.optString("motion", "none")
+                conversation.add("model" to reply)
+                while (conversation.size > 16) conversation.removeAt(0)
+                handler.post {
+                    (loading.parent as? LinearLayout)?.removeView(loading)
+                    applyArisuAction(expression, sound, motion)
+                    addChatMessage(reply, false)
+                }
+            } catch (e: Exception) {
+                handler.post {
+                    (loading.parent as? LinearLayout)?.removeView(loading)
+                    addChatMessage("연결에 실패했습니다: ${e.message ?: "알 수 없는 오류"}", false)
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
+    private fun applyArisuAction(expression: String, sound: String, motion: String) {
+        val image = when (expression.lowercase()) {
+            "smile", "happy" -> R.drawable.arisu_smile
+            "confident" -> R.drawable.arisu_jashinmanman
+            "surprised", "confused" -> R.drawable.arisu_why
+            else -> R.drawable.arisu_default
+        }
+        setCharacter(image)
+        animateMotion(motion)
+        val soundId = when (sound.lowercase()) {
+            "confirm" -> R.raw.confirm
+            "success" -> R.raw.success
+            "smile" -> R.raw.smile
+            "tell_sound" -> R.raw.tell_sound
+            "unknow" -> R.raw.unknow
+            "why" -> R.raw.why
+            "why2" -> R.raw.why2
+            "why3" -> R.raw.why3
+            "wtf" -> R.raw.wtf
+            else -> 0
+        }
+        if (soundId != 0) playSound(soundId)
+    }
+
     private fun setCharacter(resourceId: Int) {
-        // Swap the artwork immediately; any movement starts in the same UI frame.
         character?.apply {
             animate().cancel()
             setImageResource(resourceId)
             alpha = 1f
             translationY = 0f
+            translationX = 0f
+            rotation = 0f
+        }
+    }
+
+    private fun animateMotion(motion: String) {
+        val view = character ?: return
+        when (motion.lowercase()) {
+            "bounce" -> animateBounce(1)
+            "double_bounce" -> animateBounce(2)
+            "nod" -> view.animate().rotation(-4f).setDuration(100).withEndAction {
+                view.animate().rotation(4f).setDuration(120).withEndAction {
+                    view.animate().rotation(0f).setDuration(100).start()
+                }.start()
+            }.start()
+            "shake" -> view.animate().translationX(-dp(9).toFloat()).setDuration(55).withEndAction {
+                view.animate().translationX(dp(9).toFloat()).setDuration(55).withEndAction {
+                    view.animate().translationX(0f).setDuration(55).start()
+                }.start()
+            }.start()
         }
     }
 
@@ -372,6 +626,7 @@ class OverlayService : Service() {
         chatBar = null
         chatInput = null
         chatLog = null
+        chatScroll = null
         typing = false
         waitingForTap = false
     }
@@ -389,6 +644,7 @@ class OverlayService : Service() {
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
         mediaPlayer = null
+        networkExecutor.shutdownNow()
         super.onDestroy()
     }
 }
