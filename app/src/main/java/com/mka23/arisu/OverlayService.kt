@@ -24,6 +24,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Button
 import android.widget.Toast
@@ -55,6 +56,7 @@ class OverlayService : Service() {
     private var chatScroll: ScrollView? = null
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
+    private var bgmPlayer: MediaPlayer? = null
     private val conversation = mutableListOf<Pair<String, String>>()
     private var sequenceToken = 0
     private var currentLine = ""
@@ -179,8 +181,8 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
-        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        root.addView(stage, LinearLayout.LayoutParams(-1, dp(260)))
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(500), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(510)))
 
         val header = FrameLayout(this)
         val title = TextView(this).apply {
@@ -194,6 +196,20 @@ class OverlayService : Service() {
             }
         }
         header.addView(title, FrameLayout.LayoutParams(-1, dp(44), Gravity.CENTER))
+        val bgmButton = TextView(this).apply {
+            text = "♫"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "BGM 볼륨 조절"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF315C9B.toInt())
+            }
+            elevation = dp(3).toFloat()
+            setOnClickListener { showBgmVolumeDialog() }
+        }
+        header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
         val modelButton = TextView(this).apply {
             text = "AI"
             textSize = 13f
@@ -230,6 +246,69 @@ class OverlayService : Service() {
             flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         }
         windowManager.addView(root, params)
+        startBgm()
+    }
+
+    private fun bgmPreferences() = getSharedPreferences("arisu_bgm_settings", Context.MODE_PRIVATE)
+
+    private fun currentBgmVolume(): Float =
+        (bgmPreferences().getInt("volume", 55).coerceIn(0, 100) / 100f)
+
+    private fun startBgm() {
+        if (bgmPlayer?.isPlaying == true) return
+        try {
+            bgmPlayer?.release()
+            bgmPlayer = MediaPlayer.create(this, R.raw.bgm)?.apply {
+                isLooping = true
+                val volume = currentBgmVolume()
+                setVolume(volume, volume)
+                setOnErrorListener { player, _, _ ->
+                    player.release()
+                    if (bgmPlayer === player) bgmPlayer = null
+                    true
+                }
+                start()
+            }
+        } catch (_: Exception) {
+            bgmPlayer?.release()
+            bgmPlayer = null
+        }
+    }
+
+    private fun showBgmVolumeDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(12), dp(22), dp(8))
+        }
+        val valueLabel = TextView(this).apply {
+            text = "BGM 볼륨 " + (currentBgmVolume() * 100).toInt() + "%"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+        }
+        layout.addView(valueLabel)
+        val slider = SeekBar(this).apply {
+            max = 100
+            progress = (currentBgmVolume() * 100).toInt()
+        }
+        layout.addView(slider, LinearLayout.LayoutParams(-1, dp(48)))
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("배경음악 볼륨")
+            .setView(layout)
+            .setNegativeButton("닫기", null)
+            .create()
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val volume = progress / 100f
+                bgmPlayer?.setVolume(volume, volume)
+                valueLabel.text = "BGM 볼륨 " + progress + "%"
+                if (fromUser) bgmPreferences().edit().putInt("volume", progress).apply()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        dialog.show()
     }
 
     private fun handleDialogueTap() {
@@ -568,6 +647,7 @@ class OverlayService : Service() {
                 if (rawText.isEmpty()) throw IllegalStateException("Gemini 응답 텍스트가 비어 있습니다.")
                 val action = JSONObject(rawText)
                 val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
+                val openApp = action.optString("openApp", "").trim()
                 val expression = action.optString("expression", "default")
                 val sound = action.optString("sound", "none")
                 val motion = action.optString("motion", "none")
@@ -577,6 +657,7 @@ class OverlayService : Service() {
                     (loading.parent as? LinearLayout)?.removeView(loading)
                     applyArisuAction(expression, sound, motion)
                     typeAssistantMessage(reply)
+                    if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -635,6 +716,35 @@ class OverlayService : Service() {
     }
 
     private var chatOutputToken = 0
+
+    private fun launchRequestedApp(requestedName: String) {
+        val pm = packageManager
+        val installed = try {
+            @Suppress("DEPRECATION")
+            pm.getInstalledApplications(0)
+        } catch (_: Exception) { emptyList() }
+        val target = installed.firstOrNull { app ->
+            val label = pm.getApplicationLabel(app).toString()
+            label.equals(requestedName, ignoreCase = true) ||
+                label.contains(requestedName, ignoreCase = true) ||
+                requestedName.contains(label, ignoreCase = true)
+        }
+        if (target == null) {
+            addChatMessage("센세, '" + requestedName + "' 앱을 찾지 못했어요.", false)
+            return
+        }
+        val launchIntent = pm.getLaunchIntentForPackage(target.packageName)
+        if (launchIntent == null) {
+            addChatMessage("센세, 이 앱은 실행 화면을 제공하지 않아요.", false)
+            return
+        }
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(launchIntent)
+        } catch (e: Exception) {
+            addChatMessage("앱을 여는 데 실패했어요: " + (e.message ?: "알 수 없는 오류"), false)
+        }
+    }
 
     private fun applyArisuAction(expression: String, sound: String, motion: String) {
         val normalizedExpression = expression.trim().lowercase()
@@ -764,6 +874,7 @@ class OverlayService : Service() {
         typingRunnable = null
         panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         panel = null
+        bgmPlayer?.pause()
         character = null
         message = null
         chatBar = null
@@ -787,6 +898,8 @@ class OverlayService : Service() {
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
         mediaPlayer = null
+        bgmPlayer?.release()
+        bgmPlayer = null
         networkExecutor.shutdownNow()
         super.onDestroy()
     }
