@@ -17,6 +17,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.view.WindowManager
@@ -30,6 +32,11 @@ class ScreenRecordService : Service() {
     private var outputDescriptor: android.os.ParcelFileDescriptor? = null
     private var isRecording = false
     private var isPaused = false
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            if (isRecording) stopRecording()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,6 +90,7 @@ class ScreenRecordService : Service() {
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             projection = manager.getMediaProjection(resultCode, data)
                 ?: throw IllegalStateException("화면 캡처 권한을 가져오지 못했습니다.")
+            projection!!.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
 
             val metrics = DisplayMetrics()
             @Suppress("DEPRECATION")
@@ -152,8 +160,9 @@ class ScreenRecordService : Service() {
         virtualDisplay = null
         try { recorder?.reset(); recorder?.release() } catch (_: Exception) {}
         recorder = null
-        try { projection?.stop() } catch (_: Exception) {}
+        val activeProjection = projection
         projection = null
+        try { activeProjection?.stop() } catch (_: Exception) {}
         try { outputDescriptor?.close() } catch (_: Exception) {}
         outputDescriptor = null
         outputUri?.let { uri ->
