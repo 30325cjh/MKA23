@@ -366,7 +366,7 @@ class OverlayService : Service() {
 
     private fun showApiKeyDialog(onSaved: (() -> Unit)? = null) {
         val input = EditText(this).apply {
-            hint = "AIza..."
+            hint = "AQ. 또는 AIza로 시작하는 키"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
             setText(getApiKey().orEmpty())
@@ -482,14 +482,15 @@ class OverlayService : Service() {
                     .put("generationConfig", JSONObject()
                         .put("temperature", 0.85)
                         .put("responseMimeType", "application/json"))
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" +
-                    URLEncoder.encode(key, "UTF-8")
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
                 connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 20000
                     readTimeout = 45000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    // New Google AI Studio AQ. Authentication Keys are sent in this header.
+                    setRequestProperty("x-goog-api-key", key)
                 }
                 connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
