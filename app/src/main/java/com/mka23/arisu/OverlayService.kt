@@ -1,43 +1,229 @@
 package com.mka23.arisu
 
 import android.app.*
-import android.content.*
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.os.*
-import android.view.*
-import android.widget.*
-import android.net.Uri
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlin.concurrent.thread
+import android.media.MediaPlayer
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Button
+import android.view.ViewGroup
 
-class OverlayService: Service() {
- private lateinit var wm:WindowManager
- private var bubble:ImageView?=null
- private var panel:LinearLayout?=null
- private var reply:TextView?=null
- private val handler=Handler(Looper.getMainLooper())
- override fun onBind(intent:Intent?)=null
- override fun onCreate(){super.onCreate();wm=getSystemService(WINDOW_SERVICE) as WindowManager
-  if(Build.VERSION.SDK_INT>=26){val ch="arisu";getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(ch,"아리스 비서",NotificationManager.IMPORTANCE_LOW));startForeground(23,Notification.Builder(this,ch).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("아리스 대기 중").build())}
-  else startForeground(23,Notification.Builder(this).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("아리스 대기 중").build())
-  showBubble()
- }
- private fun params(w:Int,h:Int,g:Int=Gravity.TOP or Gravity.START)=WindowManager.LayoutParams(w,h,if(Build.VERSION.SDK_INT>=26)WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply{gravity=g;x=20;y=180}
- private fun showBubble(){val v=ImageView(this).apply{setImageResource(android.R.drawable.star_big_on);background=GradientDrawable().apply{setColor(0xffeaf8ff.toInt());cornerRadius=100f};setPadding(8,8,8,8)};bubble=v;v.setOnClickListener{showPanel()};wm.addView(v,params(dp(60),dp(60)))}
- private fun showPanel(){if(panel!=null){panel?.visibility=View.VISIBLE;return};val root=LinearLayout(this).apply{orientation=1;setPadding(dp(12),dp(10),dp(12),dp(10));background=GradientDrawable().apply{setColor(0xfff4faff.toInt());cornerRadius=dp(18).toFloat()}}
-  root.addView(TextView(this).apply{text="아리스: 선생님! 무엇을 도와드릴까요?";textSize=18f})
-  reply=root.getChildAt(0) as TextView
-  val input=EditText(this).apply{hint="아리스에게 말하기…";singleLine=true};root.addView(input)
-  root.addView(Button(this).apply{text="전송";setOnClickListener{val q=input.text.toString().trim();if(q.isNotEmpty())process(q)}})
-  root.addView(Button(this).apply{text="접기";setOnClickListener{root.visibility=View.GONE}})
-  panel=root;wm.addView(root,params(dp(320),WindowManager.LayoutParams.WRAP_CONTENT,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{y=dp(20);flags=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL})
- }
- private fun process(q:String){if(q.startsWith("검색")){val term=q.removePrefix("검색").trim();startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q="+Uri.encode(term))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));reply?.text="검색 페이지를 열었어요!";return}
-  if(q.startsWith("앱 실행")||q.startsWith("앱 켜")){val name=q.substringAfter(' ').trim();val pm=packageManager;val a=pm.getInstalledApplications(0).firstOrNull{pm.getApplicationLabel(it).toString().contains(name,true)};val i=a?.let{pm.getLaunchIntentForPackage(it.packageName)};if(i!=null){i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(i);reply?.text="앱을 실행했어요!"}else reply?.text="앱을 찾지 못했어요.";return};ask(q)}
- private fun ask(q:String){val key=getSharedPreferences("prefs",0).getString("key","").orEmpty();if(key.isBlank()){reply?.text="먼저 앱에서 Gemini API 키를 저장해 주세요.";return};reply?.text="아리스가 생각 중입니다…";thread{try{val c=URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+key).openConnection() as HttpURLConnection;c.requestMethod="POST";c.connectTimeout=15000;c.readTimeout=30000;c.doOutput=true;c.setRequestProperty("Content-Type","application/json");val prompt="너는 밝고 순수한 한국어 AI 비서다. 사용자를 선생님이라고 부른다. $q";val body=JSONObject().put("contents",org.json.JSONArray().put(JSONObject().put("parts",org.json.JSONArray().put(JSONObject().put("text",prompt))))).toString();c.outputStream.use{it.write(body.toByteArray())};val raw=(if(c.responseCode in 200..299)c.inputStream else c.errorStream).bufferedReader().use{it.readText()};val ans=JSONObject(raw).getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text");handler.post{reply?.text=ans}}catch(e:Exception){handler.post{reply?.text="연결 오류입니다. API 키와 네트워크를 확인해 주세요."}}}}
- private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
- override fun onDestroy(){bubble?.let{wm.removeView(it)};panel?.let{wm.removeView(it)};handler.removeCallbacksAndMessages(null);super.onDestroy()}
+class OverlayService : Service() {
+    private lateinit var windowManager: WindowManager
+    private val handler = Handler(Looper.getMainLooper())
+    private var bubble: ImageView? = null
+    private var panel: LinearLayout? = null
+    private var character: ImageView? = null
+    private var halo: ImageView? = null
+    private var message: TextView? = null
+    private var mediaPlayer: MediaPlayer? = null
+    private var sequenceToken = 0
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        startAsForeground()
+        showFloatingArisu()
+    }
+
+    private fun startAsForeground() {
+        val channelId = "arisu_overlay"
+        if (Build.VERSION.SDK_INT >= 26) {
+            val channel = NotificationChannel(channelId, "아리스 비서", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val notification = Notification.Builder(this, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("아리스가 대기 중입니다")
+                .setContentText("아이콘을 눌러 아리스를 불러보세요.")
+                .build()
+            startForeground(23, notification)
+        } else {
+            @Suppress("DEPRECATION")
+            val notification = Notification.Builder(this)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("아리스가 대기 중입니다")
+                .build()
+            startForeground(23, notification)
+        }
+    }
+
+    private fun windowParams(width: Int, height: Int, gravity: Int): WindowManager.LayoutParams {
+        return WindowManager.LayoutParams(
+            width, height,
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            this.gravity = gravity
+            x = dp(16)
+            y = dp(160)
+        }
+    }
+
+    private fun showFloatingArisu() {
+        if (bubble != null) return
+        val icon = ImageView(this).apply {
+            setImageResource(R.drawable.arisu_default)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            background = rounded(0xFFEAF7FF.toInt(), 100f)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            elevation = dp(8).toFloat()
+            contentDescription = "아리스 열기"
+        }
+        icon.setOnClickListener { playLoginSequence() }
+        bubble = icon
+        windowManager.addView(icon, windowParams(dp(70), dp(70), Gravity.TOP or Gravity.START))
+    }
+
+    private fun playLoginSequence() {
+        sequenceToken++
+        val token = sequenceToken
+        showCharacterPanel()
+        setCharacter(R.drawable.arisu_default)
+        message?.text = "연결 완료..."
+        playSound(R.raw.confirm)
+
+        handler.postDelayed({
+            if (token != sequenceToken || panel == null) return@postDelayed
+            setCharacter(R.drawable.arisu_smile)
+            character?.animate()?.cancel()
+            character?.translationY = 0f
+            character?.animate()
+                ?.translationY(-dp(16).toFloat())
+                ?.setDuration(110)
+                ?.withEndAction {
+                    character?.animate()
+                        ?.translationY(dp(7).toFloat())
+                        ?.setDuration(100)
+                        ?.withEndAction {
+                            character?.animate()?.translationY(0f)?.setDuration(110)?.start()
+                        }?.start()
+                }?.start()
+
+            playSound(R.raw.success)
+            message?.text = "선생님! 아이리스, 로그인 성공입니다!"
+        }, 950)
+    }
+
+    private fun showCharacterPanel() {
+        if (panel != null) {
+            panel?.visibility = View.VISIBLE
+            return
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = rounded(0xFFF4FAFF.toInt(), dp(22).toFloat())
+            elevation = dp(16).toFloat()
+        }
+        val stage = FrameLayout(this)
+        val haloView = ImageView(this).apply {
+            setImageResource(R.drawable.arisu_halo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        halo = haloView
+        stage.addView(haloView, FrameLayout.LayoutParams(dp(92), dp(92), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        val portrait = ImageView(this).apply {
+            setImageResource(R.drawable.arisu_default)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        character = portrait
+        stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(270), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(285)))
+
+        val title = TextView(this).apply {
+            text = "아리스"
+            textSize = 18f
+            setTextColor(0xFF17618A.toInt())
+            gravity = Gravity.CENTER
+        }
+        root.addView(title)
+        message = TextView(this).apply {
+            text = "연결 완료..."
+            textSize = 15f
+            setTextColor(0xFF243746.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(6), dp(10), dp(6), dp(10))
+        }
+        root.addView(message)
+        root.addView(Button(this).apply {
+            text = "닫기"
+            setOnClickListener { closePanel() }
+        })
+        panel = root
+        val params = windowParams(dp(330), WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            y = dp(18)
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        }
+        windowManager.addView(root, params)
+        animateHalo()
+    }
+
+    private fun animateHalo() {
+        val view = halo ?: return
+        view.animate().translationY(-dp(3).toFloat()).setDuration(700).withEndAction {
+            view.animate().translationY(dp(3).toFloat()).setDuration(700).withEndAction {
+                if (panel != null && panel?.visibility == View.VISIBLE) animateHalo()
+            }.start()
+        }.start()
+    }
+
+    private fun setCharacter(resourceId: Int) {
+        val view = character ?: return
+        view.animate().alpha(0f).translationY(dp(10).toFloat()).setDuration(120).withEndAction {
+            view.setImageResource(resourceId)
+            view.translationY = -dp(10).toFloat()
+            view.animate().alpha(1f).translationY(0f).setDuration(170).start()
+        }.start()
+    }
+
+    private fun playSound(resourceId: Int) {
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(this, resourceId)?.apply {
+                setOnCompletionListener { it.release(); if (mediaPlayer === it) mediaPlayer = null }
+                start()
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun closePanel() {
+        sequenceToken++
+        panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
+        panel = null
+        character = null
+        halo = null
+        message = null
+    }
+
+    private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    override fun onDestroy() {
+        bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
+        closePanel()
+        handler.removeCallbacksAndMessages(null)
+        mediaPlayer?.release()
+        mediaPlayer = null
+        super.onDestroy()
+    }
 }
