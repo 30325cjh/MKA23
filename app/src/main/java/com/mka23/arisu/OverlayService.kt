@@ -1,5 +1,7 @@
 package com.mka23.arisu
 
+import com.mka23.arisu.R
+
 import android.app.*
 import android.content.Intent
 import android.graphics.Color
