@@ -59,6 +59,11 @@ class OverlayService : Service() {
     private var chatLog: LinearLayout? = null
     private var chatScroll: ScrollView? = null
     private var chatInput: EditText? = null
+    private var chatTabBar: LinearLayout? = null
+    private val chatLogs = mutableMapOf<String, LinearLayout>()
+    private val chatScrolls = mutableMapOf<String, ScrollView>()
+    private val chatTabButtons = mutableMapOf<String, TextView>()
+    private var selectedChatMode = "arisu"
     private var mediaPlayer: MediaPlayer? = null
     private var dialogueVoicePlayer: MediaPlayer? = null
     private var soundEnhancer: LoudnessEnhancer? = null
@@ -243,6 +248,7 @@ class OverlayService : Service() {
                 setOnClickListener {
                     activeCharacter = name
                     companionsPresent = false
+                    selectChatMode(name)
                     partnerCharacter?.visibility = View.GONE
                     primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
@@ -340,6 +346,7 @@ class OverlayService : Service() {
                 .edit().putString("active", remainingCharacter).apply()
             panelTitle?.text = if (remainingCharacter == "arisu") "아리스" else "케이"
             chatInput?.hint = if (remainingCharacter == "arisu") "아리스에게 메시지 입력..." else "케이에게 메시지 입력..."
+            selectChatMode(remainingCharacter)
             message?.visibility = View.GONE
             startBgm()
             resizePortrait(false)
@@ -366,11 +373,7 @@ class OverlayService : Service() {
         waitingForTap = false
         dialogueStage = 0
         assistantDialogueActive = false
-        chatBar?.let { panel?.removeView(it) }
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
+        clearChatUi()
         conversation.clear()
         stopDialogueVoice()
 
@@ -427,11 +430,7 @@ class OverlayService : Service() {
         typing = false
         waitingForTap = false
         assistantDialogueActive = false
-        chatBar?.let { panel?.removeView(it) }
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
+        clearChatUi()
         conversation.clear()
         stopDialogueVoice()
         panelTitle?.text = "케이"
@@ -450,11 +449,7 @@ class OverlayService : Service() {
         typing = false
         waitingForTap = false
         dialogueStage = 0
-        chatBar?.let { panel?.removeView(it) }
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
+        clearChatUi()
         conversation.clear()
         stopDialogueVoice()
 
@@ -837,26 +832,90 @@ class OverlayService : Service() {
     }
 
     // The input bar keeps its original compact dimensions; chat messages remain SMS-style.
+    private fun currentChatMode(): String =
+        if (companionsPresent) "both" else if (activeCharacter == "kei") "kei" else "arisu"
+
+    private fun selectChatMode(mode: String) {
+        val normalized = if (mode == "both" || mode == "kei") mode else "arisu"
+        selectedChatMode = normalized
+        chatLogs.forEach { (key, _) ->
+            chatScrolls[key]?.visibility = if (key == normalized && !assistantDialogueActive) View.VISIBLE else View.GONE
+        }
+        chatTabButtons.forEach { (key, button) ->
+            button.background = rounded(
+                if (key == normalized) 0xFF315C9B.toInt() else 0xFF292929.toInt(),
+                dp(10).toFloat()
+            )
+            button.alpha = if (key == normalized) 1f else 0.72f
+        }
+        chatLog = chatLogs[normalized]
+        chatScroll = chatScrolls[normalized]
+    }
+
+    private fun clearChatUi() {
+        chatTabBar?.let { panel?.removeView(it) }
+        chatScrolls.values.forEach { view -> panel?.removeView(view) }
+        chatBar?.let { panel?.removeView(it) }
+        chatTabBar = null
+        chatTabButtons.clear()
+        chatLogs.clear()
+        chatScrolls.clear()
+        chatBar = null
+        chatInput = null
+        chatLog = null
+        chatScroll = null
+    }
+
     private fun showChatBar() {
         val root = panel ?: return
         // 인사 시퀀스가 끝나면 확장된 캐릭터 영역을 접어 입력창이 화면 안에 보이게 한다.
         resizePortrait(false)
         message?.visibility = View.GONE
-        chatScroll?.visibility = View.VISIBLE
-        chatBar?.visibility = View.VISIBLE
-        if (chatBar != null) return
-        val messages = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+        if (chatBar != null) {
+            chatTabBar?.visibility = View.VISIBLE
+            chatBar?.visibility = View.VISIBLE
+            selectChatMode(currentChatMode())
+            return
         }
-        chatLog = messages
-        val history = ScrollView(this).apply {
-            isFillViewport = true
-            background = rounded(0xFF151515.toInt(), dp(14).toFloat())
-            addView(messages, FrameLayout.LayoutParams(-1, FrameLayout.LayoutParams.WRAP_CONTENT))
+
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(4))
         }
-        chatScroll = history
-        root.addView(history, LinearLayout.LayoutParams(-1, dp(90)))
+        listOf("arisu" to "아리스", "kei" to "케이", "both" to "공존").forEach { (mode, label) ->
+            val tab = TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setOnClickListener { selectChatMode(mode) }
+            }
+            tabs.addView(tab, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                marginEnd = dp(4)
+            })
+            chatTabButtons[mode] = tab
+        }
+        chatTabBar = tabs
+        root.addView(tabs, LinearLayout.LayoutParams(-1, dp(42)))
+
+        listOf("arisu", "kei", "both").forEach { mode ->
+            val messages = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            }
+            val history = ScrollView(this).apply {
+                isFillViewport = true
+                background = rounded(0xFF151515.toInt(), dp(14).toFloat())
+                addView(messages, FrameLayout.LayoutParams(-1, FrameLayout.LayoutParams.WRAP_CONTENT))
+                visibility = View.GONE
+            }
+            chatLogs[mode] = messages
+            chatScrolls[mode] = history
+            root.addView(history, LinearLayout.LayoutParams(-1, dp(90)))
+        }
+        selectChatMode(currentChatMode())
 
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -979,7 +1038,9 @@ class OverlayService : Service() {
     }
 
     private fun addChatMessage(text: String, fromUser: Boolean): View {
-        val messages = chatLog ?: return TextView(this)
+        val mode = currentChatMode()
+        if (mode != selectedChatMode) selectChatMode(mode)
+        val messages = chatLogs[mode] ?: chatLog ?: return TextView(this)
         val bubble = TextView(this).apply {
             this.text = text
             textSize = 16f
@@ -1336,7 +1397,8 @@ class OverlayService : Service() {
         assistantFullReply = fullReply
         assistantGeneratedFiles = files
         assistantBaseCharacter = activeCharacter
-        chatScroll?.visibility = View.GONE
+        chatTabBar?.visibility = View.GONE
+        chatScrolls.values.forEach { it.visibility = View.GONE }
         chatBar?.visibility = View.GONE
         message?.visibility = View.VISIBLE
         resizePortrait(true)
@@ -1379,8 +1441,9 @@ class OverlayService : Service() {
         typingRunnable = null
         message?.visibility = View.GONE
         resizePortrait(false)
-        chatScroll?.visibility = View.VISIBLE
+        chatTabBar?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
+        selectChatMode(currentChatMode())
         if (companionsPresent && assistantFullReply.contains("\n")) {
             assistantFullReply.lineSequence().filter { it.isNotBlank() }.forEach { addChatMessage(it, false) }
         } else {
@@ -1398,7 +1461,9 @@ class OverlayService : Service() {
         val name = file.optString("name", "arisu_file.txt")
         val mime = file.optString("mimeType", "text/plain")
         val content = file.optString("content")
-        val messages = chatLog ?: return
+        val mode = currentChatMode()
+        if (mode != selectedChatMode) selectChatMode(mode)
+        val messages = chatLogs[mode] ?: chatLog ?: return
         val card = TextView(this).apply {
             text = "📄  $name\n눌러서 다운로드"
             textSize = 14f
@@ -1807,6 +1872,10 @@ class OverlayService : Service() {
         chatInput = null
         chatLog = null
         chatScroll = null
+        chatTabBar = null
+        chatTabButtons.clear()
+        chatLogs.clear()
+        chatScrolls.clear()
         typing = false
         waitingForTap = false
         assistantDialogueActive = false
@@ -1819,6 +1888,7 @@ class OverlayService : Service() {
         if (primaryCharacterView == null) return
         companionsPresent = true
         assistantBaseCharacter = activeCharacter
+        selectChatMode("both")
         val partnerPath = if (activeCharacter == "kei") "arisu/images/arisu_default.jpg" else "kei/images/default.png"
         val partner = ImageView(this).apply {
             setImageBitmap(loadAssetBitmap(partnerPath))
