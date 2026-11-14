@@ -6,7 +6,13 @@ android {
     namespace 'com.mka23.arisu'
     compileSdk 35
 
+    buildFeatures {
+        buildConfig true
+    }
+
+    def geminiApiKey = System.getenv('GEMINI_API_KEY') ?: ''
     defaultConfig {
+        buildConfigField 'String', 'GEMINI_API_KEY', '"' + geminiApiKey.replace('\\', '\\\\').replace('"', '\\"') + '"'
         applicationId 'com.mka23.arisu'
         minSdk 23
         targetSdk 32
