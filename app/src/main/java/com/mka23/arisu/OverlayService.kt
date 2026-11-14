@@ -45,6 +45,7 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var bubble: ImageView? = null
+    private var pendingBubbleClick: Runnable? = null
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
     private var primaryCharacterView: ImageView? = null
@@ -167,7 +168,21 @@ class OverlayService : Service() {
             elevation = dp(8).toFloat()
             contentDescription = "아리스 열기"
         }
-        icon.setOnClickListener { showCharacterSelectDialog() }
+        icon.setOnClickListener {
+            // 단일 탭은 캐릭터 선택, 짧은 간격의 두 번 탭은 종료 확인으로 구분한다.
+            if (pendingBubbleClick != null) {
+                pendingBubbleClick?.let { handler.removeCallbacks(it) }
+                pendingBubbleClick = null
+                showExitConfirmDialog()
+            } else {
+                val singleTap = Runnable {
+                    pendingBubbleClick = null
+                    showCharacterSelectDialog()
+                }
+                pendingBubbleClick = singleTap
+                handler.postDelayed(singleTap, 280L)
+            }
+        }
         bubble = icon
         val bubbleParams = windowParams(dp(70), dp(70), Gravity.TOP or Gravity.START)
         var downRawX = 0f
@@ -495,6 +510,8 @@ class OverlayService : Service() {
     }
 
     private fun showCharacterPanel() {
+        // 캐릭터 창이 열려 있는 동안 플로팅 아이콘은 숨긴다.
+        bubble?.visibility = View.GONE
         if (panel != null) {
             panel?.visibility = View.VISIBLE
             return
@@ -603,6 +620,22 @@ class OverlayService : Service() {
             @Suppress("DEPRECATION")
             registerReceiver(receiver, filter)
         }
+    }
+
+    private fun showExitConfirmDialog() {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("앱 종료")
+            .setMessage("아리스&케이를 종료하시겠습니까?")
+            .setPositiveButton("종료") { _, _ ->
+                pendingBubbleClick?.let { handler.removeCallbacks(it) }
+                pendingBubbleClick = null
+                stopForeground(true)
+                stopSelf()
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
     }
 
     private fun setOverlayDialog(dialog: AlertDialog) {
@@ -1756,6 +1789,8 @@ class OverlayService : Service() {
     }
 
     private fun closePanel() {
+        // 캐릭터 창을 닫으면 플로팅 아이콘을 다시 표시한다.
+        bubble?.visibility = View.VISIBLE
         sequenceToken++
         companionsPresent = false
         stopDialogueVoice()
