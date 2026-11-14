@@ -263,7 +263,7 @@ class OverlayService : Service() {
         typingRunnable?.let { handler.removeCallbacks(it) }
         typing = false
         waitingForTap = false
-        dialogueStage = 4
+        dialogueStage = 2
         assistantDialogueActive = false
         chatBar?.let { panel?.removeView(it) }
         chatBar = null
@@ -275,7 +275,7 @@ class OverlayService : Service() {
         setCharacter("arisu/images/arisu_default.jpg")
         message?.visibility = View.VISIBLE
         playDialogueVoice("arisu/sounds/greeting.mp3")
-        startTypewriter("센세, ㅎㅇ!")
+        startTypewriter("반갑습니다, 센세!")
     }
 
     private fun showCharacterPanel() {
