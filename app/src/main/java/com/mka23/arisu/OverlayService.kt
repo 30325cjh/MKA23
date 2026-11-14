@@ -60,6 +60,8 @@ class OverlayService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var bgmPlayer: MediaPlayer? = null
     private var bgmEnhancer: LoudnessEnhancer? = null
+    private var ttsPlayer: MediaPlayer? = null
+    @Volatile private var ttsToken = 0
     private var pendingAttachmentUri: Uri? = null
     private var pendingAttachmentName: String? = null
     private var attachmentButton: TextView? = null
@@ -291,6 +293,21 @@ class OverlayService : Service() {
             setOnClickListener { showBgmVolumeDialog() }
         }
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
+        val ttsButton = TextView(this).apply {
+            text = "🔊"
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "아리스 음성 설정"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF315C9B.toInt())
+            }
+            elevation = dp(3).toFloat()
+            setOnClickListener { showTtsSettingsDialog() }
+        }
+        val ttsButtonParams = FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END or Gravity.TOP).apply { rightMargin = dp(48) }
+        header.addView(ttsButton, ttsButtonParams)
         val modelButton = TextView(this).apply {
             text = "AI"
             textSize = 13f
@@ -694,6 +711,212 @@ class OverlayService : Service() {
         }
     }
 
+    private fun ttsPreferences() = getSharedPreferences("arisu_tts_settings", Context.MODE_PRIVATE)
+
+    private fun saveTtsApiKey(value: String) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        val encrypted = cipher.doFinal(value.trim().toByteArray(Charsets.UTF_8))
+        ttsPreferences().edit()
+            .putString("tts_api_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString("tts_api_value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .apply()
+    }
+
+    private fun getTtsApiKey(): String? = try {
+        val prefs = ttsPreferences()
+        val iv = prefs.getString("tts_api_iv", null) ?: return null
+        val value = prefs.getString("tts_api_value", null) ?: return null
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            getOrCreateSecretKey(),
+            GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP))
+        )
+        String(cipher.doFinal(Base64.decode(value, Base64.NO_WRAP)), Charsets.UTF_8).trim()
+    } catch (_: Exception) { null }
+
+    private fun getTtsVoiceId(): String =
+        ttsPreferences().getString("voice_id", "")?.trim().orEmpty()
+
+    private fun isAutoTtsEnabled(): Boolean =
+        ttsPreferences().getBoolean("auto_tts", true)
+
+    private fun showTtsSettingsDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        val keyInput = EditText(this).apply {
+            hint = "ElevenLabs API Key"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+            setText(getTtsApiKey().orEmpty())
+        }
+        val voiceInput = EditText(this).apply {
+            hint = "Voice ID"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+            setText(getTtsVoiceId())
+        }
+        val autoCheck = android.widget.CheckBox(this).apply {
+            text = "아리스 답변 자동으로 읽기"
+            setTextColor(Color.WHITE)
+            isChecked = isAutoTtsEnabled()
+        }
+        layout.addView(TextView(this).apply {
+            text = "ElevenLabs API 키"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+        })
+        layout.addView(keyInput)
+        layout.addView(TextView(this).apply {
+            text = "Voice ID"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            setPadding(0, dp(10), 0, 0)
+        })
+        layout.addView(voiceInput)
+        layout.addView(autoCheck)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("아리스 TTS 설정")
+            .setMessage("ElevenLabs에서 발급한 API 키와 사용할 음성의 Voice ID를 입력하세요. API 키는 이 기기의 Android Keystore로 암호화해 저장합니다.")
+            .setView(layout)
+            .setNegativeButton("취소", null)
+            .setPositiveButton("저장", null)
+            .create()
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val key = keyInput.text.toString().trim()
+                val voice = voiceInput.text.toString().trim()
+                if (key.isNotEmpty() && key.length < 20) {
+                    keyInput.error = "API 키를 확인해주세요."
+                    return@setOnClickListener
+                }
+                if (voice.isNotEmpty() && voice.length < 5) {
+                    voiceInput.error = "Voice ID를 확인해주세요."
+                    return@setOnClickListener
+                }
+                try {
+                    if (key.isNotEmpty()) saveTtsApiKey(key)
+                    ttsPreferences().edit()
+                        .putString("voice_id", voice)
+                        .putBoolean("auto_tts", autoCheck.isChecked)
+                        .apply()
+                    if (!autoCheck.isChecked) stopTtsPlayback()
+                    dialog.dismiss()
+                    Toast.makeText(this, "TTS 설정을 저장했어요.", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "TTS 설정 저장 실패: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun stopTtsPlayback() {
+        ttsToken++
+        try { ttsPlayer?.stop() } catch (_: Exception) {}
+        try { ttsPlayer?.release() } catch (_: Exception) {}
+        ttsPlayer = null
+    }
+
+    private fun speakReplyAutomatically(text: String) {
+        if (!isAutoTtsEnabled()) return
+        val apiKey = getTtsApiKey()
+        val voiceId = getTtsVoiceId()
+        if (apiKey.isNullOrBlank() || voiceId.isBlank()) {
+            Toast.makeText(this, "음성 버튼에서 ElevenLabs API 키와 Voice ID를 설정해주세요.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val spokenText = text.trim().take(9000)
+        if (spokenText.isBlank()) return
+        stopTtsPlayback()
+        val token = ttsToken
+        networkExecutor.execute {
+            var connection: HttpURLConnection? = null
+            var audioFile: java.io.File? = null
+            try {
+                val safeVoiceId = URLEncoder.encode(voiceId, "UTF-8")
+                val endpoint = "https://api.elevenlabs.io/v1/text-to-speech/$safeVoiceId?output_format=mp3_44100_128"
+                connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 20000
+                    readTimeout = 90000
+                    doOutput = true
+                    setRequestProperty("xi-api-key", apiKey)
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                }
+                val body = JSONObject()
+                    .put("text", spokenText)
+                    .put("model_id", "eleven_multilingual_v2")
+                    .put("voice_settings", JSONObject()
+                        .put("stability", 0.42)
+                        .put("similarity_boost", 0.78)
+                        .put("style", 0.25)
+                        .put("use_speaker_boost", true))
+                connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                if (status !in 200..299) {
+                    val error = connection.errorStream?.use {
+                        BufferedReader(InputStreamReader(it, Charsets.UTF_8)).use { reader -> reader.readText() }
+                    }.orEmpty()
+                    throw IllegalStateException("ElevenLabs 오류 ($status): ${error.take(500)}")
+                }
+                audioFile = java.io.File.createTempFile("arisu_tts_", ".mp3", cacheDir)
+                connection.inputStream.use { input ->
+                    audioFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                handler.post {
+                    if (token != ttsToken || !isAutoTtsEnabled()) {
+                        audioFile?.delete()
+                        return@post
+                    }
+                    try {
+                        val player = MediaPlayer()
+                        ttsPlayer = player
+                        player.setDataSource(audioFile!!.absolutePath)
+                        player.setOnPreparedListener { prepared ->
+                            if (token == ttsToken) prepared.start()
+                            else {
+                                prepared.release()
+                                audioFile?.delete()
+                            }
+                        }
+                        player.setOnCompletionListener { completed ->
+                            completed.release()
+                            if (ttsPlayer === completed) ttsPlayer = null
+                            audioFile?.delete()
+                        }
+                        player.setOnErrorListener { failed, _, _ ->
+                            failed.release()
+                            if (ttsPlayer === failed) ttsPlayer = null
+                            audioFile?.delete()
+                            true
+                        }
+                        player.prepareAsync()
+                    } catch (e: Exception) {
+                        try { ttsPlayer?.release() } catch (_: Exception) {}
+                        ttsPlayer = null
+                        audioFile?.delete()
+                        Toast.makeText(this, "음성 재생 실패: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                audioFile?.delete()
+                handler.post {
+                    if (token == ttsToken) {
+                        Toast.makeText(this, "TTS 오류: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
     private fun modelPreferences() = getSharedPreferences("arisu_model_settings", Context.MODE_PRIVATE)
 
     private fun getSelectedModel(): String =
@@ -936,6 +1159,7 @@ class OverlayService : Service() {
         chatScroll?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
         addChatMessage(assistantFullReply, false)
+        speakReplyAutomatically(assistantFullReply)
         assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
         assistantGeneratedFiles = emptyList()
         assistantLines = emptyList()
@@ -1250,6 +1474,7 @@ class OverlayService : Service() {
 
     private fun closePanel() {
         sequenceToken++
+        stopTtsPlayback()
         typingRunnable?.let { handler.removeCallbacks(it) }
         typingRunnable = null
         panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
@@ -1281,6 +1506,7 @@ class OverlayService : Service() {
         handler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
         mediaPlayer = null
+        stopTtsPlayback()
         bgmPlayer?.release()
         bgmPlayer = null
         bgmEnhancer?.release()
