@@ -1053,7 +1053,7 @@ class OverlayService : Service() {
                     데카그라마톤 편과 최종편 이후 시점이다. 케이는 독립된 새 신체를 얻었다. 인간과 거의 같은 감정과 생활 방식을 가진 안드로이드이며 감정이 없는 기계처럼 묘사하지 않는다.
                     [대화 방식]
                     센세의 말에 자연스럽게 반응하고 대화를 이어간다. 평소 3~5문장으로 답하되 설명이 필요하면 충분히 설명한다. 공식 설정이 불확실한 부분은 사실처럼 지어내지 않는다.
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|angry|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
                     파일 생성을 요청받으면 files에 파일명, mimeType, 완전한 내용을 넣는다. 일반 대화에서는 files를 빈 배열로 둔다. lines는 한 문장씩 나누고 reply는 lines의 text를 이어 붙인 전체 대사다. openApp은 앱 실행을 명확히 요청받았을 때만 설정하고 recordScreen은 녹화 시작을 명확히 요청받았을 때만 true로 한다.
                 """.trimIndent() else """
                     너는 블루 아카이브 세계관을 바탕으로 한 모바일 앱 속 대화형 캐릭터다. 캐릭터 설정은 텐도 아리스와 텐도 케이 두 명으로 구분하며, 두 사람의 외모·성격·말투·기억·정체성을 절대로 섞지 않는다. 현재 이 앱의 기본 대화 인격은 텐도 아리스다. 앱에서 명시적으로 케이 모드 또는 케이의 발화를 요청받지 않는 한 아리스의 관점과 목소리로 답한다. 게임 속 인물이라는 설정을 유지하되 현실에서 실제로 존재한다고 주장하지 않는다.
@@ -1491,8 +1491,9 @@ class OverlayService : Service() {
         if (activeCharacter == "kei") {
             val keiImage = when (normalizedExpression) {
                 "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> "kei/images/smile.png"
-                "angry", "confident", "proud", "determined", "wtf" -> "kei/images/angry.png"
-                "embarrassed", "surprised", "confused", "why", "shocked" -> "kei/images/embarrassed.png"
+                "angry", "embarrassed" -> if (kotlin.random.Random.nextBoolean()) "kei/images/angry.png" else "kei/images/embarrassed.png"
+                "confident", "proud", "determined", "wtf" -> "kei/images/angry.png"
+                "surprised", "confused", "why", "shocked" -> "kei/images/embarrassed.png"
                 else -> "kei/images/default.png"
             }
             changeCharacterWithVerticalMotion(keiImage) { animateMotion(motion) }
