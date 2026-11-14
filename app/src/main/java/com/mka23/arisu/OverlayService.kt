@@ -31,18 +31,13 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Button
 import android.widget.Toast
-import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.KeyStore
 import java.util.concurrent.Executors
-import javax.crypto.Cipher
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
@@ -983,25 +978,8 @@ class OverlayService : Service() {
         }
     }
 
-    private fun apiPreferences() = getSharedPreferences("arisu_secure_settings", Context.MODE_PRIVATE)
-
-    private fun getApiKey(): String? {
-        BuildConfig.GEMINI_API_KEY.trim().takeIf { it.isNotEmpty() }?.let { return it }
-        return try {
-            val prefs = apiPreferences()
-            val ivText = prefs.getString("api_iv", null) ?: return null
-            val valueText = prefs.getString("api_value", null) ?: return null
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                getOrCreateSecretKey(),
-                GCMParameterSpec(128, Base64.decode(ivText, Base64.NO_WRAP))
-            )
-            String(cipher.doFinal(Base64.decode(valueText, Base64.NO_WRAP)), Charsets.UTF_8).trim()
-        } catch (_: Exception) {
-            null
-        }
-    }
+    private fun getApiKey(): String? =
+        BuildConfig.GEMINI_API_KEY.trim().takeIf { it.isNotEmpty() }
 
     private fun modelPreferences() = getSharedPreferences("arisu_model_settings", Context.MODE_PRIVATE)
 
@@ -1043,7 +1021,6 @@ class OverlayService : Service() {
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
             (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
-            Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
             Toast.makeText(this, "내장 Gemini API 키를 찾을 수 없습니다. 앱을 최신 빌드로 다시 설치해주세요.", Toast.LENGTH_LONG).show()
             return
         }
