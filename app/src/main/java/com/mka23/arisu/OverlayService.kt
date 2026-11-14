@@ -647,7 +647,7 @@ class OverlayService : Service() {
     private fun submitChatMessage() {
         val input = chatInput ?: return
         val rawTypedText = input.text.toString().trim()
-        val typedText = if (storyAgeMode == 15) censorMatureWords(rawTypedText) else rawTypedText
+        val typedText = if (storyMode && storyAgeMode == 15) censorMatureWords(rawTypedText) else rawTypedText
         val attachment = pendingAttachmentUri
         val attachmentName = pendingAttachmentName
         val text = typedText.ifEmpty {
@@ -904,7 +904,7 @@ class OverlayService : Service() {
                 if (rawText.isEmpty()) throw IllegalStateException("Gemini 응답 텍스트가 비어 있습니다.")
                 val action = JSONObject(rawText)
                 val rawReply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
-                val reply = if (storyAgeMode == 15) censorMatureWords(rawReply) else rawReply
+                val reply = if (storyMode && storyAgeMode == 15) censorMatureWords(rawReply) else rawReply
                 val generatedFiles = mutableListOf<JSONObject>()
                 val filesArray = action.optJSONArray("files")
                 if (filesArray != null) {
@@ -928,7 +928,7 @@ class OverlayService : Service() {
                     for (i in 0 until linesArray.length()) {
                         val item = linesArray.optJSONObject(i) ?: continue
                         if (item.optString("text").isNotBlank()) {
-                            if (storyAgeMode == 15) item.put("text", censorMatureWords(item.optString("text")))
+                            if (storyMode && storyAgeMode == 15) item.put("text", censorMatureWords(item.optString("text")))
                             lines.add(item)
                         }
                     }
