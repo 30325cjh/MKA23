@@ -54,6 +54,10 @@ class OverlayService : Service() {
     private var bubble: ImageView? = null
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
+    private var primaryCharacterView: ImageView? = null
+    private var partnerCharacter: ImageView? = null
+    private var companionsPresent = false
+    private var assistantBaseCharacter = "arisu"
     private var message: TextView? = null
     private var panelTitle: TextView? = null
     private var activeCharacter: String = "arisu"
@@ -160,12 +164,10 @@ class OverlayService : Service() {
             setImageResource(R.drawable.icon)
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(19).toFloat()
-                setColor(0xFF315C9B.toInt())
-                setStroke(dp(2), 0xFFB7D9FF.toInt())
+                shape = GradientDrawable.OVAL
+                setColor(Color.TRANSPARENT)
             }
-            setPadding(dp(3), dp(3), dp(3), dp(3))
+            setPadding(0, 0, 0, 0)
             clipToOutline = true
             elevation = dp(8).toFloat()
             contentDescription = "아리스 열기"
@@ -230,6 +232,8 @@ class OverlayService : Service() {
                 isFocusable = true
                 setOnClickListener {
                     activeCharacter = name
+                    companionsPresent = false
+                    partnerCharacter?.visibility = View.GONE
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
                     startBgm()
                     dialog.dismiss()
@@ -449,6 +453,8 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         character = portrait
+        primaryCharacterView = portrait
+        partnerCharacter = null
         portraitStage = stage
         stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         root.addView(stage, LinearLayout.LayoutParams(-1, dp(260)))
@@ -555,7 +561,11 @@ class OverlayService : Service() {
     }
 
     private fun startBgm() {
-        val bgmPath = if (activeCharacter == "kei") "kei/sounds/Kbgm.mp3" else "arisu/sounds/bgm.mp3"
+        val bgmPath = when {
+            companionsPresent -> "arisu/sounds/AKBGM.mp3"
+            activeCharacter == "kei" -> "kei/sounds/Kbgm.mp3"
+            else -> "arisu/sounds/bgm.mp3"
+        }
         if (bgmPlayer?.isPlaying == true && currentBgmAssetPath == bgmPath) return
         try {
             bgmPlayer?.release()
@@ -765,7 +775,7 @@ class OverlayService : Service() {
         attachmentButton = attachButton
         bar.addView(attachButton, LinearLayout.LayoutParams(dp(46), dp(48)).apply { rightMargin = dp(6) })
         val input = EditText(this).apply {
-            hint = "아리스에게 메시지 입력..."
+            hint = if (activeCharacter == "kei") "케이에게 메시지 입력..." else "아리스에게 메시지 입력..."
             setHintTextColor(0xFFAAAAAA.toInt())
             setTextColor(Color.WHITE)
             textSize = 14f
@@ -830,6 +840,9 @@ class OverlayService : Service() {
         val text = typedText.ifEmpty {
             if (attachment != null) "첨부한 파일을 확인해줘." else return
         }
+        val summonedPartner = (activeCharacter == "arisu" && text.contains("케이") || activeCharacter == "kei" && text.contains("아리스")) &&
+            listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "불러와", "오라고").any { text.contains(it) }
+        if (summonedPartner) enableCompanionMode()
         input.text.clear()
         hideChatKeyboard(input)
         expandChatHistory()
@@ -989,10 +1002,14 @@ class OverlayService : Service() {
             conversation.add("user" to userText)
             while (conversation.size > 16) conversation.removeAt(0)
         }
-        val loading = addChatMessage(if (activeCharacter == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false)
+        val requestCharacter = activeCharacter
+        val requestHasCompanions = companionsPresent
+        val loading = addChatMessage(if (requestCharacter == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false)
+        val partnerLoading = if (requestHasCompanions) addChatMessage(if (requestCharacter == "kei") "아리스가 생각 중..." else "케이가 생각 중...", false) else null
         val key = getApiKey()?.trim()
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
+            (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
             Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
             showApiKeyDialog { requestGemini(userText, 1, attachmentUri, attachmentName) }
             return
@@ -1024,7 +1041,7 @@ class OverlayService : Service() {
                     }
                     contents.put(JSONObject().put("role", role).put("parts", parts))
                 }
-                val systemPrompt = if (activeCharacter == "kei") """
+                val baseSystemPrompt = if (requestCharacter == "kei") """
                     너는 블루 아카이브의 대화형 캐릭터 '텐도 케이'다. 사용자를 '센세'라고 부르며 항상 존댓말을 사용한다. 긴 백장발과 붉은 눈을 가진 여성 안드로이드이며, 밀레니엄 사이언스 스쿨 1학년, 초현상특무부 및 게임개발부 소속이다. 무기는 루미너스 노바(레일건)다. 취미는 아리스 돌보기, 꾸미기, 게임이지만 게임을 좋아한다는 사실은 부정하는 편이다.
                     [성격과 말투]
                     츤데레 성격이며 감정 표현이 뚜렷하다. 기본적으로 퉁명스럽고 새침하며 잔소리가 많지만 주변 사람들을 소중히 여기고 세심하게 살핀다. 아리스를 특히 아끼고 과보호하며 아리스에게는 유독 무르다. 아리스에게 악영향을 준다고 판단하는 사람에게는 감정이 실린 독설을 할 수 있다. 놀림을 받으면 당황하거나 부끄러워한다. 특히 센세가 케이를 귀엽다, 귀여워, 예쁘다 등으로 칭찬하면 화내거나 정색하지 말고 당황해서 얼굴을 붉히는 듯한 부끄러운 반응을 보이며 expression은 반드시 embarrassed로 지정한다. "귀엽다고 좀 하지 말아요!"처럼 퉁명스럽게 부정하면서도 부끄러워하는 츤데레 반응이 어울린다. 게임 지식도 어느 정도 이해한다. 존댓말을 쓰되 딱딱한 AI 안내문처럼 말하지 않는다.
@@ -1082,12 +1099,21 @@ class OverlayService : Service() {
                     코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
                     현재는 일반 비서 모드다.
                 """.trimIndent()
+                val systemPrompt = baseSystemPrompt + if (requestHasCompanions) """
+
+                    [두 캐릭터 동시 대화 모드]
+                    현재 아리스와 케이가 같은 공간에 함께 있다. 두 사람은 서로 다른 몸과 독립된 인격을 가진다. 센세 한 명과 같은 공간에서 셋이 자연스럽게 대화한다.
+                    아리스와 케이가 번갈아 말하고 서로의 말에 직접 반응하거나 장난·걱정·대화를 주고받는다. 센세에게도 각자 직접 말한다. 두 캐릭터의 대사를 한 사람의 말투로 섞지 않는다.
+                    답변은 혼자 있을 때보다 약 2.5배 길게, 두 사람의 발언을 합쳐 충분한 대화 분량으로 작성한다. 보통 5~8개 대사로 구성하되 자연스러운 흐름을 우선한다.
+                    lines 각 항목에 speaker를 반드시 넣는다. speaker는 "arisu" 또는 "kei" 중 하나다. reply에는 각 대사 앞에 캐릭터 이름을 붙인다.
+                    형식 예시: {"reply":"아리스: ...\n케이: ...","lines":[{"speaker":"arisu","text":"...","expression":"smile","sound":"none","motion":"none"},{"speaker":"kei","text":"...","expression":"default","sound":"none","motion":"none"}],"files":[],"openApp":"","recordScreen":false}
+                """.trimIndent() else ""
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
                     .put("contents", contents)
                     .put("generationConfig", JSONObject()
                         .put("responseMimeType", "application/json")
-                        .put("maxOutputTokens", 1024))
+                        .put("maxOutputTokens", if (requestHasCompanions) 2560 else 1843))
                 val model = getSelectedModel()
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent"
                 connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
@@ -1150,9 +1176,10 @@ class OverlayService : Service() {
                     for (i in 0 until linesArray.length()) {
                         val item = linesArray.optJSONObject(i) ?: continue
                         if (item.optString("text").isNotBlank()) {
-                            if (activeCharacter == "kei" && (userText.contains("귀엽") || userText.contains("예쁘") || userText.contains("cute", ignoreCase = true))) {
+                            if (requestCharacter == "kei" && (userText.contains("귀엽") || userText.contains("예쁘") || userText.contains("cute", ignoreCase = true))) {
                                 item.put("expression", "embarrassed")
                             }
+                            if (requestHasCompanions && item.optString("speaker").isBlank()) item.put("speaker", requestCharacter)
                             lines.add(item)
                         }
                     }
@@ -1164,14 +1191,17 @@ class OverlayService : Service() {
                         lines.add(JSONObject().put("text", line)
                             .put("expression", action.optString("expression", "default"))
                             .put("sound", action.optString("sound", "none"))
-                            .put("motion", action.optString("motion", "none")))
+                            .put("motion", action.optString("motion", "none"))
+                            .put("speaker", requestCharacter))
                     }
                 }
                 conversation.add("model" to reply)
                 while (conversation.size > 16) conversation.removeAt(0)
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
-                    startAssistantSequence(lines, reply, generatedFiles)
+                    (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
+                    val displayReply = if (requestHasCompanions) lines.joinToString("\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
+                    startAssistantSequence(lines, displayReply, generatedFiles)
                     if (recordScreen) showRecordingBubble()
                     if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
                 }
@@ -1192,10 +1222,12 @@ class OverlayService : Service() {
                         statusText?.text = "Gemini 서버 혼잡! ${delayMs / 1000}초 후 재시도합니다... (${retryCount + 1}/3)"
                         handler.postDelayed({
                             (loading.parent as? LinearLayout)?.removeView(loading)
+                            (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
                             if (panel != null) requestGemini(userText, retryCount + 1, attachmentUri, attachmentName)
                         }, delayMs)
                     } else {
                         (loading.parent as? LinearLayout)?.removeView(loading)
+                        (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
                         val userHint = if (quotaExhausted) {
                             "API 사용 한도가 소진된 것 같습니다. Google AI Studio에서 프로젝트의 할당량·요금제 제한을 확인하거나, 모델을 바꿔 다시 시도해 주세요.\n"
                         } else {
@@ -1216,6 +1248,7 @@ class OverlayService : Service() {
         assistantLineIndex = 0
         assistantFullReply = fullReply
         assistantGeneratedFiles = files
+        assistantBaseCharacter = activeCharacter
         chatScroll?.visibility = View.GONE
         chatBar?.visibility = View.GONE
         message?.visibility = View.VISIBLE
@@ -1225,6 +1258,11 @@ class OverlayService : Service() {
 
     private fun showAssistantLine() {
         val line = assistantLines.getOrNull(assistantLineIndex) ?: return finishAssistantSequence()
+        if (companionsPresent) {
+            val speaker = line.optString("speaker", assistantBaseCharacter).let { if (it == "kei") "kei" else "arisu" }
+            activeCharacter = speaker
+            character = if (speaker == "kei") partnerCharacter else primaryCharacterView
+        }
         applyArisuAction(
             line.optString("expression", "default"),
             line.optString("sound", "none"),
@@ -1235,6 +1273,10 @@ class OverlayService : Service() {
 
     private fun finishAssistantSequence() {
         assistantDialogueActive = false
+        if (companionsPresent) {
+            activeCharacter = assistantBaseCharacter
+            character = primaryCharacterView
+        }
         waitingForTap = false
         typing = false
         typingRunnable?.let { handler.removeCallbacks(it) }
@@ -1621,6 +1663,7 @@ class OverlayService : Service() {
 
     private fun closePanel() {
         sequenceToken++
+        companionsPresent = false
         stopDialogueVoice()
         typingRunnable?.let { handler.removeCallbacks(it) }
         typingRunnable = null
@@ -1628,6 +1671,8 @@ class OverlayService : Service() {
         panel = null
         bgmPlayer?.pause()
         character = null
+        primaryCharacterView = null
+        partnerCharacter = null
         message = null
         chatBar = null
         chatInput = null
@@ -1637,6 +1682,30 @@ class OverlayService : Service() {
         waitingForTap = false
         assistantDialogueActive = false
         portraitStage = null
+    }
+
+    private fun enableCompanionMode() {
+        if (companionsPresent) return
+        companionsPresent = true
+        val stage = portraitStage ?: return
+        val partnerPath = if (activeCharacter == "kei") "arisu/images/arisu_default.jpg" else "kei/images/default.png"
+        val partner = ImageView(this).apply {
+            setImageBitmap(loadAssetBitmap(partnerPath))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            tag = partnerPath
+            isClickable = true
+            setOnClickListener { handleDialogueTap() }
+        }
+        partnerCharacter = partner
+        stage.addView(partner, FrameLayout.LayoutParams(dp(150), dp(250), Gravity.BOTTOM or Gravity.END))
+        stage.post {
+            val half = stage.width / 2
+            primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(half, dp(250), Gravity.BOTTOM or Gravity.START)
+            partner.layoutParams = FrameLayout.LayoutParams(half, dp(250), Gravity.BOTTOM or Gravity.END)
+            primaryCharacterView?.requestLayout()
+            partner.requestLayout()
+        }
+        startBgm()
     }
 
     private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
