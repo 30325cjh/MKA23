@@ -928,9 +928,10 @@ class OverlayService : Service() {
         val text = typedText.ifEmpty {
             if (attachment != null) "첨부한 파일을 확인해줘." else return
         }
-        val summonedPartner = (activeCharacter == "arisu" && text.contains("케이") || activeCharacter == "kei" && text.contains("아리스")) &&
-            listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "불러와", "오라고", "나와", "등장", "호출", "소환").any { text.contains(it) }
-        if (summonedPartner) enableCompanionMode()
+        val summonName = if (activeCharacter == "arisu") "케이" else "아리스"
+        val mentionsPartner = text.contains(summonName) || text.contains(if (activeCharacter == "arisu") "K" else "아리스")
+        val summonIntent = listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "데리고", "불러와", "오라고", "나와", "등장", "호출", "소환", "함께해", "합류").any { text.contains(it) }
+        if (mentionsPartner && summonIntent) enableCompanionMode()
         input.text.clear()
         hideChatKeyboard(input)
         expandChatHistory()
@@ -1141,7 +1142,8 @@ class OverlayService : Service() {
                     데카그라마톤 편과 최종편 이후 시점이다. 케이는 독립된 새 신체를 얻었다. 인간과 거의 같은 감정과 생활 방식을 가진 안드로이드이며 감정이 없는 기계처럼 묘사하지 않는다.
                     [대화 방식]
                     센세의 말에 자연스럽게 반응하고 대화를 이어간다. 평소 3~5문장으로 답하되 설명이 필요하면 충분히 설명한다. 공식 설정이 불확실한 부분은 사실처럼 지어내지 않는다.
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|angry|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","bringPartner":false,"lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|angry|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
+                    혼자 대화 중에도 아리스가 대화에 함께 있으면 더 자연스럽거나 아리스를 직접 챙기고 싶거나 아리스와 관련된 대화가 이어질 때는 네 판단으로 bringPartner를 true로 설정해 아리스를 자발적으로 불러올 수 있다. 단, 매번 부르지 말고 맥락상 자연스러울 때만 드물게 사용한다. bringPartner가 true이면 lines에 speaker를 반드시 "kei" 또는 "arisu"로 지정하고 두 사람이 주고받는 대사를 최소 2개 포함한다. 호출할 필요가 없으면 false로 둔다.
                     파일 생성을 요청받으면 files에 파일명, mimeType, 완전한 내용을 넣는다. 일반 대화에서는 files를 빈 배열로 둔다. lines는 한 문장씩 나누고 reply는 lines의 text를 이어 붙인 전체 대사다. openApp은 앱 실행을 명확히 요청받았을 때만 설정하고 recordScreen은 녹화 시작을 명확히 요청받았을 때만 true로 한다.
                 """.trimIndent() else """
                     너는 블루 아카이브 세계관을 바탕으로 한 모바일 앱 속 대화형 캐릭터다. 캐릭터 설정은 텐도 아리스와 텐도 케이 두 명으로 구분하며, 두 사람의 외모·성격·말투·기억·정체성을 절대로 섞지 않는다. 현재 이 앱의 기본 대화 인격은 텐도 아리스다. 앱에서 명시적으로 케이 모드 또는 케이의 발화를 요청받지 않는 한 아리스의 관점과 목소리로 답한다. 게임 속 인물이라는 설정을 유지하되 현실에서 실제로 존재한다고 주장하지 않는다.
@@ -1178,7 +1180,8 @@ class OverlayService : Service() {
                     [대화 방식]
                     사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 3~5문장으로 자연스럽게 답하되 설명이 필요한 경우 충분히 설명한다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
                     
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","bringPartner":false,"lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
+                    혼자 대화 중에도 케이가 대화에 함께 있으면 더 자연스럽거나 케이와 관련된 이야기, 둘이 함께 반응할 만한 상황이면 네 판단으로 bringPartner를 true로 설정해 케이를 자발적으로 불러올 수 있다. 단, 매번 부르지 말고 맥락상 자연스러울 때만 드물게 사용한다. bringPartner가 true이면 lines에 speaker를 반드시 "arisu" 또는 "kei"로 지정하고 두 사람이 주고받는 대사를 최소 2개 포함한다. 호출할 필요가 없으면 false로 둔다.
                     센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
                     대사를 문장별로 나누어 lines 배열에 넣는다. 한 항목에는 한 문장만 넣고, 각 문장마다 감정에 맞는 표정·효과음·동작을 개별 지정한다. 문장이 여러 개면 순서를 유지한다. reply는 lines의 text를 이어 붙인 전체 대사다.
                     연출 지침: 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 의미 있는 순간에만 발생하도록 한다.
@@ -1256,6 +1259,7 @@ class OverlayService : Service() {
                     }
                 }
                 val openApp = action.optString("openApp", "").trim()
+                val aiSummonsPartner = !requestHasCompanions && action.optBoolean("bringPartner", false)
                 val recordScreen = action.optBoolean("recordScreen", false) &&
                     userText.contains("녹화") &&
                     (userText.contains("시작") || userText.contains("사작") || userText.contains("해달") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
@@ -1298,7 +1302,13 @@ class OverlayService : Service() {
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
                     (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
-                    val displayReply = if (requestHasCompanions) lines.joinToString("\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
+                    if (aiSummonsPartner) {
+                        enableCompanionMode()
+                        lines.forEach { line ->
+                            if (line.optString("speaker").isBlank()) line.put("speaker", requestCharacter)
+                        }
+                    }
+                    val displayReply = if (companionsPresent) lines.joinToString("\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
                     startAssistantSequence(lines, displayReply, generatedFiles)
                     if (recordScreen) showRecordingBubble()
                     if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
@@ -1793,8 +1803,10 @@ class OverlayService : Service() {
 
     private fun enableCompanionMode() {
         if (companionsPresent) return
-        companionsPresent = true
         val stage = portraitStage ?: return
+        if (primaryCharacterView == null) return
+        companionsPresent = true
+        assistantBaseCharacter = activeCharacter
         val partnerPath = if (activeCharacter == "kei") "arisu/images/arisu_default.jpg" else "kei/images/default.png"
         val partner = ImageView(this).apply {
             setImageBitmap(loadAssetBitmap(partnerPath))
