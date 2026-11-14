@@ -1260,11 +1260,20 @@ class OverlayService : Service() {
                     (userText.contains("시작") || userText.contains("사작") || userText.contains("해달") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
                 val lines = mutableListOf<JSONObject>()
                 val linesArray = action.optJSONArray("lines")
+                val keiCompliment = requestCharacter == "kei" && Regex(
+                    "칭찬|잘했|대단|멋지|귀엽|예쁘|아름답|최고|훌륭|똑똑|착하|고마워|좋아해|사랑해|cute|pretty|beautiful|great|amazing|good job",
+                    RegexOption.IGNORE_CASE
+                ).containsMatchIn(userText)
+                val keiGraciousReaction = keiCompliment && kotlin.random.Random.nextInt(100) < 20
                 if (linesArray != null) {
                     for (i in 0 until linesArray.length()) {
                         val item = linesArray.optJSONObject(i) ?: continue
                         if (item.optString("text").isNotBlank()) {
-                            if (requestCharacter == "kei" && (userText.contains("귀엽") || userText.contains("예쁘") || userText.contains("cute", ignoreCase = true))) {
+                            if (keiGraciousReaction && lines.isEmpty()) {
+                                item.put("text", "…칭찬해 주셔서 감사합니다, 센세. 딱히 기뻐서 그런 건 아니니까요!")
+                                item.put("expression", "smile")
+                                item.put("sound", "smile")
+                            } else if (requestCharacter == "kei" && keiCompliment) {
                                 item.put("expression", "embarrassed")
                             }
                             if (requestHasCompanions && item.optString("speaker").isBlank()) item.put("speaker", requestCharacter)
