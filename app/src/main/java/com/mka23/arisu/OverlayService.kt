@@ -462,7 +462,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 val picker = Intent(this@OverlayService, MainActivity::class.java).apply {
                     action = "com.mka23.arisu.PICK_ATTACHMENT"
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 startActivity(picker)
             }
