@@ -391,12 +391,9 @@ class OverlayService : Service() {
         waitingForTap = false
         dialogueStage = 2
         assistantDialogueActive = false
-        chatBar?.let { panel?.removeView(it) }
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
-        conversation.clear()
+        // 캐릭터를 바꿔도 기존 채팅 기록과 입력창을 유지한다.
+        chatScroll?.visibility = View.GONE
+        chatBar?.visibility = View.GONE
         stopDialogueVoice()
         panelTitle?.text = "케이"
         setCharacter("kei/images/default.png")
@@ -486,12 +483,9 @@ class OverlayService : Service() {
         waitingForTap = false
         dialogueStage = 2
         assistantDialogueActive = false
-        chatBar?.let { panel?.removeView(it) }
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
-        conversation.clear()
+        // 캐릭터를 바꿔도 기존 채팅 기록과 입력창을 유지한다.
+        chatScroll?.visibility = View.GONE
+        chatBar?.visibility = View.GONE
         stopDialogueVoice()
         panelTitle?.text = "아리스"
         setCharacter("arisu/images/arisu_default.jpg")
@@ -812,7 +806,9 @@ class OverlayService : Service() {
     // The input bar keeps its original compact dimensions; chat messages remain SMS-style.
     private fun showChatBar() {
         val root = panel ?: return
+        // 인사 시퀀스가 끝나면 확장된 캐릭터 영역을 접어 입력창이 화면 안에 보이게 한다.
         resizePortrait(false)
+        message?.visibility = View.GONE
         chatScroll?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
         if (chatBar != null) return
