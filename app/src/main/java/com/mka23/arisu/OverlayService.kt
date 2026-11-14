@@ -231,6 +231,7 @@ class OverlayService : Service() {
                 setOnClickListener {
                     activeCharacter = name
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
+                    startBgm()
                     dialog.dismiss()
                     if (name == "arisu") {
                         if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
