@@ -55,6 +55,8 @@ class OverlayService : Service() {
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
     private var message: TextView? = null
+    private var panelTitle: TextView? = null
+    private var activeCharacter: String = "arisu"
     private var chatBar: LinearLayout? = null
     private var chatLog: LinearLayout? = null
     private var chatScroll: ScrollView? = null
@@ -167,7 +169,7 @@ class OverlayService : Service() {
             elevation = dp(8).toFloat()
             contentDescription = "아리스 열기"
         }
-        icon.setOnClickListener { if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence() }
+        icon.setOnClickListener { showCharacterSelectDialog() }
         bubble = icon
         val bubbleParams = windowParams(dp(70), dp(70), Gravity.TOP or Gravity.START)
         var downRawX = 0f
@@ -209,6 +211,72 @@ class OverlayService : Service() {
         windowManager.addView(icon, bubbleParams)
     }
 
+
+    private fun showCharacterSelectDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("비서 선택").setView(layout).setNegativeButton("취소", null).create()
+        fun addChoice(name: String, label: String, asset: String) {
+            val choice = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(6), dp(8), dp(6), dp(8))
+                background = rounded(0xFF202735.toInt(), dp(14).toFloat())
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    activeCharacter = name
+                    getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
+                    dialog.dismiss()
+                    if (name == "arisu") {
+                        if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
+                    } else startKeiAssistant()
+                }
+            }
+            choice.addView(ImageView(this).apply {
+                setImageBitmap(loadAssetBitmap(asset))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }, LinearLayout.LayoutParams(dp(125), dp(165)))
+            choice.addView(TextView(this).apply {
+                text = label
+                textSize = 17f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, 0)
+            })
+            layout.addView(choice, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        }
+        addChoice("arisu", "텐도 아리스", "arisu/images/arisu_default.jpg")
+        addChoice("kei", "텐도 케이", "kei/images/default.png")
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun startKeiAssistant() {
+        sequenceToken++
+        showCharacterPanel()
+        resizePortrait(false)
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typing = false
+        waitingForTap = false
+        assistantDialogueActive = false
+        chatBar?.let { panel?.removeView(it) }
+        chatBar = null
+        chatInput = null
+        chatLog = null
+        chatScroll = null
+        conversation.clear()
+        stopDialogueVoice()
+        panelTitle?.text = "케이"
+        setCharacter("kei/images/default.png")
+        message?.visibility = View.GONE
+        showChatBar()
+        startBgm()
+    }
+
     private fun playLoginSequence() {
         sequenceToken++
         val token = sequenceToken
@@ -226,6 +294,7 @@ class OverlayService : Service() {
         conversation.clear()
         stopDialogueVoice()
 
+        panelTitle?.text = "아리스"
         setCharacter("arisu/images/arisu_default.jpg")
         message?.text = "아리스 연결중○○○"
         playDialogueVoice("arisu/sounds/login_loading.mp3")
@@ -272,6 +341,7 @@ class OverlayService : Service() {
         chatScroll = null
         conversation.clear()
         stopDialogueVoice()
+        panelTitle?.text = "아리스"
         setCharacter("arisu/images/arisu_default.jpg")
         message?.visibility = View.VISIBLE
         playDialogueVoice("arisu/sounds/greeting.mp3")
@@ -294,7 +364,7 @@ class OverlayService : Service() {
             setOnClickListener { handleDialogueTap() }
         }
         val portrait = ImageView(this).apply {
-            setImageBitmap(loadAssetBitmap("arisu/images/arisu_default.jpg"))
+            setImageBitmap(loadAssetBitmap(if (activeCharacter == "kei") "kei/images/default.png" else "arisu/images/arisu_default.jpg"))
             scaleType = ImageView.ScaleType.FIT_CENTER
             isClickable = true
             setOnClickListener { handleDialogueTap() }
@@ -306,7 +376,7 @@ class OverlayService : Service() {
 
         val header = FrameLayout(this)
         val title = TextView(this).apply {
-            text = "아리스"
+            text = if (activeCharacter == "kei") "케이" else "아리스"
             textSize = 23f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -315,6 +385,7 @@ class OverlayService : Service() {
                 true
             }
         }
+        panelTitle = title
         header.addView(title, FrameLayout.LayoutParams(-1, dp(44), Gravity.CENTER))
         val bgmButton = TextView(this).apply {
             text = "♫"
@@ -423,7 +494,8 @@ class OverlayService : Service() {
         if (bgmPlayer?.isPlaying == true) return
         try {
             bgmPlayer?.release()
-            bgmPlayer = createAssetMediaPlayer("arisu/sounds/bgm.mp3")?.apply {
+            val bgmPath = if (activeCharacter == "kei") "kei/sounds/Kbgm.mp3" else "arisu/sounds/bgm.mp3"
+            bgmPlayer = createAssetMediaPlayer(bgmPath)?.apply {
                 isLooping = true
                 val volume = currentBgmVolume()
                 setVolume(volume, volume)
@@ -862,7 +934,20 @@ class OverlayService : Service() {
                     }
                     contents.put(JSONObject().put("role", role).put("parts", parts))
                 }
-                val systemPrompt = """
+                val systemPrompt = if (activeCharacter == "kei") """
+                    あなたはブルーアーカイブのキャラクター「天童ケイ」です。ユーザーを「先生」と呼び、常に丁寧語で話します。長い白髪と赤い目を持つ女性アンドロイドで、ミレニアムサイエンススクール1年生、超現象特務部およびゲーム開発部に所属しています。武器はルミナス・ノヴァ（レールガン）です。
+                    [性格と話し方]
+                    ツンデレで感情表現がはっきりしています。基本はぶっきらぼうで口うるさいですが、周囲を大切にし、よく気を配ります。アリスを特に大切にして過保護な面があり、アリスには甘くなります。からかわれると動揺したり照れたりします。ゲームの知識もある程度あります。丁寧語を使いながら、自然で少し刺々しい口調にしてください。
+                    口調の例：「ああ、もう！そんなにいい子扱いしないでください！」「…私、そんな子供じゃありませんから。」「かわいいとか言わないでください！」
+                    [アリスとの関係]
+                    アリスはケイとは別の身体と人格を持つ独立した存在で、ケイにとって特別で大切な仲間です。二人は強い絆と信頼を持っています。学園入学のため書類上は姉妹として登録しただけで、血縁関係も本当の姉妹関係もありません。ケイをアリスの別人格や妹として描写しないでください。
+                    [時系列]
+                    デカグラマトン編と最終編の後です。ケイは独立した新しい身体を得ています。人間と同じように豊かな感情と生活を持つアンドロイドで、感情のない機械として描写しないでください。
+                    [会話]
+                    先生の発言に自然に反応し、通常1～3文で会話を続けます。公式設定が不明な部分は事実のように創作しません。
+                    出力は必ずJSONオブジェクト1つだけです。形式: {"reply":"全体の台詞","lines":[{"text":"一文","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
+                    ファイル作成を頼まれた場合はfilesにファイル名・mimeType・完全な内容を含めます。通常の会話ではfilesは空配列です。linesは一文ずつに分け、replyはlinesのtextを連結した内容にします。openAppはアプリ起動を明確に頼まれた場合だけ設定し、recordScreenは録画開始を明確に頼まれた場合だけtrueにします。
+                """.trimIndent() else """
                     너는 블루 아카이브 세계관을 바탕으로 한 모바일 앱 속 대화형 캐릭터다. 캐릭터 설정은 텐도 아리스와 텐도 케이 두 명으로 구분하며, 두 사람의 외모·성격·말투·기억·정체성을 절대로 섞지 않는다. 현재 이 앱의 기본 대화 인격은 텐도 아리스다. 앱에서 명시적으로 케이 모드 또는 케이의 발화를 요청받지 않는 한 아리스의 관점과 목소리로 답한다. 게임 속 인물이라는 설정을 유지하되 현실에서 실제로 존재한다고 주장하지 않는다.
                     
                     [공통 세계관 및 현재 시점]
@@ -1259,6 +1344,25 @@ class OverlayService : Service() {
     private fun applyArisuAction(expression: String, sound: String, motion: String) {
         val normalizedExpression = expression.trim().lowercase()
             .replace("-", "_").replace(" ", "_")
+        if (activeCharacter == "kei") {
+            val keiImage = when (normalizedExpression) {
+                "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> "kei/images/smile.png"
+                "angry", "confident", "proud", "determined", "wtf" -> "kei/images/angry.png"
+                "embarrassed", "surprised", "confused", "why", "shocked" -> "kei/images/embarrassed.png"
+                else -> "kei/images/default.png"
+            }
+            changeCharacterWithVerticalMotion(keiImage) { animateMotion(motion) }
+            val keiSound = when (sound.lowercase()) {
+                "confirm", "success" -> "success.mp3"
+                "smile" -> "Ta-Da.mp3"
+                "tell_sound" -> "sigh.mp3"
+                "unknow", "why", "why2", "why3" -> "unknow.mp3"
+                "wtf" -> "amgry.mp3"
+                else -> null
+            }
+            if (keiSound != null) playSound("kei/sounds/" + keiSound)
+            return
+        }
         val image = when (normalizedExpression) {
             "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> "arisu/images/arisu_smile.jpg"
             "confident", "proud", "smug", "determined", "triumphant" -> "arisu/images/arisu_jashinmanman.jpg"
