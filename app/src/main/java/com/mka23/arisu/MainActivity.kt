@@ -26,11 +26,26 @@ class MainActivity : Activity() {
             setPadding(28, 36, 28, 28)
             setBackgroundColor(0xFFF3F9FF.toInt())
         }
-        root.addView(TextView(this).apply {
-            text = "아리케이 비서"
-            textSize = 28f
-            setTextColor(0xFF17496A.toInt())
-        })
+        val appTitle = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val titleParts = listOf(
+            Triple("아리스", 0xFF8EDFFF.toInt(), 0xFF00D5C8.toInt()),
+            Triple("&", 0xFFFFFFFF.toInt(), 0xFFDCE3E8.toInt()),
+            Triple("케이", 0xFFFFF0F7.toInt(), 0xFFFF6B9D.toInt())
+        )
+        titleParts.forEach { (label, fill, outline) ->
+            appTitle.addView(TextView(this).apply {
+                text = label
+                textSize = 29f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(fill)
+                setShadowLayer(3f * resources.displayMetrics.density, 0f, 0f, outline)
+                includeFontPadding = false
+            })
+        }
+        root.addView(appTitle)
         root.addView(TextView(this).apply {
             text = "아리스와 케이가 화면 위에서 센세를 맞이합니다."
             textSize = 15f
@@ -52,12 +67,12 @@ class MainActivity : Activity() {
             }
         })
         root.addView(Button(this).apply {
-            text = "아리케이 비서 시작"
+            text = "아리스&케이 시작"
             setOnClickListener {
                 if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this@MainActivity)) {
                     val service = Intent(this@MainActivity, OverlayService::class.java)
                     if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
-                    status.text = "아리케이가 화면 위에서 대기 중이에요!"
+                    status.text = "아리스&케이가 화면 위에서 대기 중이에요!"
                 } else {
                     status.text = "먼저 화면 위에 표시 권한을 허용해 주세요."
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
