@@ -410,7 +410,8 @@ class OverlayService : Service() {
         dialogueStage = 2
         assistantDialogueActive = false
         // 캐릭터를 바꿔도 기존 채팅 기록과 입력창을 유지한다.
-        chatScroll?.visibility = View.GONE
+        chatTabBar?.visibility = View.GONE
+        chatScrolls.values.forEach { it.visibility = View.GONE }
         chatBar?.visibility = View.GONE
         stopDialogueVoice()
         panelTitle?.text = "케이"
@@ -494,7 +495,8 @@ class OverlayService : Service() {
         dialogueStage = 2
         assistantDialogueActive = false
         // 캐릭터를 바꿔도 기존 채팅 기록과 입력창을 유지한다.
-        chatScroll?.visibility = View.GONE
+        chatTabBar?.visibility = View.GONE
+        chatScrolls.values.forEach { it.visibility = View.GONE }
         chatBar?.visibility = View.GONE
         stopDialogueVoice()
         panelTitle?.text = "아리스"
