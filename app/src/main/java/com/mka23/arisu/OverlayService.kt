@@ -1,5 +1,6 @@
 package com.mka23.arisu
 
+import android.animation.ValueAnimator
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -20,6 +21,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -83,6 +85,7 @@ class OverlayService : Service() {
     private var recordBubble: TextView? = null
     private var recordMenu: FrameLayout? = null
     private var recordingPaused = false
+    private var homeCloseReceiver: android.content.BroadcastReceiver? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -111,6 +114,7 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         startAsForeground()
+        registerHomeCloseReceiver()
         showFloatingArisu()
     }
 
@@ -211,6 +215,7 @@ class OverlayService : Service() {
         sequenceToken++
         val token = sequenceToken
         showCharacterPanel()
+        resizePortrait(true)
         typingRunnable?.let { handler.removeCallbacks(it) }
         typing = false
         waitingForTap = false
@@ -297,21 +302,6 @@ class OverlayService : Service() {
             setOnClickListener { showBgmVolumeDialog() }
         }
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
-        val ttsButton = TextView(this).apply {
-            text = "🔊"
-            textSize = 17f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            contentDescription = "아리스 음성 설정"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xFF315C9B.toInt())
-            }
-            elevation = dp(3).toFloat()
-            setOnClickListener { showTtsSettingsDialog() }
-        }
-        val ttsButtonParams = FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END or Gravity.TOP).apply { rightMargin = dp(48) }
-        header.addView(ttsButton, ttsButtonParams)
         val modelButton = TextView(this).apply {
             text = "AI"
             textSize = 13f
@@ -352,6 +342,26 @@ class OverlayService : Service() {
     }
 
 
+
+    private fun registerHomeCloseReceiver() {
+        if (homeCloseReceiver != null) return
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_CLOSE_SYSTEM_DIALOGS &&
+                    intent.getStringExtra("reason") == "homekey") {
+                    closePanel()
+                }
+            }
+        }
+        homeCloseReceiver = receiver
+        val filter = android.content.IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(receiver, filter)
+        }
+    }
 
     private fun setOverlayDialog(dialog: AlertDialog) {
         @Suppress("DEPRECATION")
@@ -587,6 +597,33 @@ class OverlayService : Service() {
         root.requestFocus()
     }
 
+    private fun hideChatKeyboard(input: EditText) {
+        try {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(input.windowToken, 0)
+        } catch (_: Exception) {}
+        input.clearFocus()
+        panel?.requestFocus()
+    }
+
+    private fun expandChatHistory() {
+        val history = chatScroll ?: return
+        val params = history.layoutParams as? LinearLayout.LayoutParams ?: return
+        val start = if (params.height > 0) params.height else dp(90)
+        val target = dp(220)
+        if (start == target) return
+        ValueAnimator.ofInt(start, target).apply {
+            duration = 260L
+            addUpdateListener { animator ->
+                val lp = history.layoutParams as? LinearLayout.LayoutParams ?: return@addUpdateListener
+                lp.height = animator.animatedValue as Int
+                history.layoutParams = lp
+                panel?.requestLayout()
+            }
+            start()
+        }
+    }
+
     private fun submitChatMessage() {
         val input = chatInput ?: return
         val rawTypedText = input.text.toString().trim()
@@ -597,6 +634,8 @@ class OverlayService : Service() {
             if (attachment != null) "첨부한 파일을 확인해줘." else return
         }
         input.text.clear()
+        hideChatKeyboard(input)
+        expandChatHistory()
         pendingAttachmentUri = null
         pendingAttachmentName = null
         attachmentButton?.text = "＋"
@@ -1549,6 +1588,10 @@ class OverlayService : Service() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     override fun onDestroy() {
+        homeCloseReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        homeCloseReceiver = null
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         removeRecordingBubble()
         closePanel()
