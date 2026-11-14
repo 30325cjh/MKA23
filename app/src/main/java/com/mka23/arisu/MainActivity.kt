@@ -13,6 +13,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.action == "com.mka23.arisu.PICK_ATTACHMENT") {
+            launchAttachmentPicker()
+            return
+        }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(28, 36, 28, 28)
@@ -57,6 +61,34 @@ class MainActivity : Activity() {
             }
         })
         setContentView(root)
+    }
+
+    private fun launchAttachmentPicker() {
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "text/html", "application/xhtml+xml"))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(picker, 2307)
+    }
+
+    @Deprecated("Deprecated in Android API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2307) {
+            if (resultCode == RESULT_OK) {
+                val uri = data?.data ?: return
+                try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+                val service = Intent(this, OverlayService::class.java).apply {
+                    action = "com.mka23.arisu.ATTACHMENT_SELECTED"
+                    this.data = uri
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+            }
+            finish()
+        }
     }
 
     override fun onResume() {
