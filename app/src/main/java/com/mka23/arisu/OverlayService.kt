@@ -60,6 +60,8 @@ class OverlayService : Service() {
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
     private var dialogueVoicePlayer: MediaPlayer? = null
+    private var soundEnhancer: LoudnessEnhancer? = null
+    private var dialogueVoiceEnhancer: LoudnessEnhancer? = null
     private var bgmPlayer: MediaPlayer? = null
     private var currentBgmAssetPath: String? = null
     private var bgmEnhancer: LoudnessEnhancer? = null
@@ -154,7 +156,7 @@ class OverlayService : Service() {
     private fun showFloatingArisu() {
         if (bubble != null) return
         val icon = ImageView(this).apply {
-            setImageResource(R.drawable.icon)
+            setImageResource(R.drawable.icon2)
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -1314,8 +1316,10 @@ class OverlayService : Service() {
 
     private fun showAssistantLine() {
         val line = assistantLines.getOrNull(assistantLineIndex) ?: return finishAssistantSequence()
+        val speaker = if (companionsPresent) {
+            line.optString("speaker", assistantBaseCharacter).let { if (it == "kei") "kei" else "arisu" }
+        } else activeCharacter
         if (companionsPresent) {
-            val speaker = line.optString("speaker", assistantBaseCharacter).let { if (it == "kei") "kei" else "arisu" }
             activeCharacter = speaker
             character = if (speaker == assistantBaseCharacter) primaryCharacterView else partnerCharacter
             // 헤더 이름은 고정된 기본 창이 아니라 현재 대사를 말하는 캐릭터를 표시한다.
@@ -1326,7 +1330,11 @@ class OverlayService : Service() {
             line.optString("sound", "none"),
             line.optString("motion", "none")
         )
-        startTypewriter(line.optString("text"))
+        val lineText = line.optString("text")
+        if (lineText.contains("센세")) {
+            playSound(if (speaker == "kei") "kei/sounds/Ksensei.mp3" else "arisu/sounds/Asensei.mp3")
+        }
+        startTypewriter(lineText)
     }
 
     private fun finishAssistantSequence() {
@@ -1690,9 +1698,17 @@ class OverlayService : Service() {
         stopDialogueVoice()
         try {
             dialogueVoicePlayer = createAssetMediaPlayer(assetPath)?.apply {
+                try {
+                    dialogueVoiceEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                        setTargetGain(352)
+                        enabled = true
+                    }
+                } catch (_: Exception) { dialogueVoiceEnhancer = null }
                 setOnCompletionListener { player ->
                     player.release()
                     if (dialogueVoicePlayer === player) dialogueVoicePlayer = null
+                    dialogueVoiceEnhancer?.release()
+                    dialogueVoiceEnhancer = null
                 }
                 start()
             }
@@ -1710,22 +1726,36 @@ class OverlayService : Service() {
             try { player.release() } catch (_: Exception) {}
         }
         dialogueVoicePlayer = null
+        dialogueVoiceEnhancer?.release()
+        dialogueVoiceEnhancer = null
     }
 
     private fun playSound(assetPath: String) {
         try {
             mediaPlayer?.setOnCompletionListener(null)
             mediaPlayer?.release()
+            soundEnhancer?.release()
+            soundEnhancer = null
             mediaPlayer = createAssetMediaPlayer(assetPath)?.apply {
+                try {
+                    soundEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                        setTargetGain(352)
+                        enabled = true
+                    }
+                } catch (_: Exception) { soundEnhancer = null }
                 setOnCompletionListener { player ->
                     player.release()
                     if (mediaPlayer === player) mediaPlayer = null
+                    soundEnhancer?.release()
+                    soundEnhancer = null
                 }
                 start()
             }
         } catch (_: Exception) {
             mediaPlayer?.release()
             mediaPlayer = null
+            soundEnhancer?.release()
+            soundEnhancer = null
         }
     }
 
