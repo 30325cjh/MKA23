@@ -1262,7 +1262,7 @@ class OverlayService : Service() {
         if (companionsPresent) {
             val speaker = line.optString("speaker", assistantBaseCharacter).let { if (it == "kei") "kei" else "arisu" }
             activeCharacter = speaker
-            character = if (speaker == "kei") partnerCharacter else primaryCharacterView
+            character = if (speaker == assistantBaseCharacter) primaryCharacterView else partnerCharacter
         }
         applyArisuAction(
             line.optString("expression", "default"),
