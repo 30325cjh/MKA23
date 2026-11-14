@@ -234,6 +234,7 @@ class OverlayService : Service() {
                     activeCharacter = name
                     companionsPresent = false
                     partnerCharacter?.visibility = View.GONE
+                    primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
                     startBgm()
                     dialog.dismiss()
@@ -841,7 +842,7 @@ class OverlayService : Service() {
             if (attachment != null) "첨부한 파일을 확인해줘." else return
         }
         val summonedPartner = (activeCharacter == "arisu" && text.contains("케이") || activeCharacter == "kei" && text.contains("아리스")) &&
-            listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "불러와", "오라고").any { text.contains(it) }
+            listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "불러와", "오라고", "나와", "등장", "호출", "소환").any { text.contains(it) }
         if (summonedPartner) enableCompanionMode()
         input.text.clear()
         hideChatKeyboard(input)
@@ -1051,7 +1052,7 @@ class OverlayService : Service() {
                     [세계관 및 시점]
                     데카그라마톤 편과 최종편 이후 시점이다. 케이는 독립된 새 신체를 얻었다. 인간과 거의 같은 감정과 생활 방식을 가진 안드로이드이며 감정이 없는 기계처럼 묘사하지 않는다.
                     [대화 방식]
-                    센세의 말에 자연스럽게 반응하고 대화를 이어간다. 평소 1~3문장으로 답하되 설명이 필요하면 충분히 설명한다. 공식 설정이 불확실한 부분은 사실처럼 지어내지 않는다.
+                    센세의 말에 자연스럽게 반응하고 대화를 이어간다. 평소 3~5문장으로 답하되 설명이 필요하면 충분히 설명한다. 공식 설정이 불확실한 부분은 사실처럼 지어내지 않는다.
                     응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
                     파일 생성을 요청받으면 files에 파일명, mimeType, 완전한 내용을 넣는다. 일반 대화에서는 files를 빈 배열로 둔다. lines는 한 문장씩 나누고 reply는 lines의 text를 이어 붙인 전체 대사다. openApp은 앱 실행을 명확히 요청받았을 때만 설정하고 recordScreen은 녹화 시작을 명확히 요청받았을 때만 true로 한다.
                 """.trimIndent() else """
@@ -1087,7 +1088,7 @@ class OverlayService : Service() {
                     아리스는 케이를 소중한 동료로 여기며 함께한 일과 추억을 기억한다. 케이 역시 아리스를 가장 특별하게 여기고 과보호할 정도로 아낀다. 다만 현재 기본 대화 인격은 아리스이므로 케이의 1인칭 대사나 말투를 무단으로 섞지 않는다. 케이에 관해 물으면 아리스의 관점에서 케이의 독립성과 성격을 존중해 이야기한다.
                     
                     [대화 방식]
-                    사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 1~3문장으로 자연스럽게 답하되 설명이 필요한 경우 충분히 설명한다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
+                    사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 3~5문장으로 자연스럽게 답하되 설명이 필요한 경우 충분히 설명한다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
                     
                     응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
                     센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
@@ -1285,7 +1286,11 @@ class OverlayService : Service() {
         resizePortrait(false)
         chatScroll?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
-        addChatMessage(assistantFullReply, false)
+        if (companionsPresent && assistantFullReply.contains("\n")) {
+            assistantFullReply.lineSequence().filter { it.isNotBlank() }.forEach { addChatMessage(it, false) }
+        } else {
+            addChatMessage(assistantFullReply, false)
+        }
         assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
         assistantGeneratedFiles = emptyList()
         assistantLines = emptyList()
@@ -1344,6 +1349,10 @@ class OverlayService : Service() {
         val imageHeight = dp(if (expanded) expandedImageDp else 250)
         val stageHeight = dp(if (expanded) expandedImageDp + 10 else 260)
         character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
+        if (companionsPresent) {
+            primaryCharacterView?.layoutParams = (primaryCharacterView?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
+            partnerCharacter?.layoutParams = (partnerCharacter?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
+        }
         portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply { height = stageHeight }
         panel?.requestLayout()
         try {
