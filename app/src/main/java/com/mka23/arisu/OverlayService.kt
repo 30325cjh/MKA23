@@ -1239,38 +1239,37 @@ class OverlayService : Service() {
         val normalizedExpression = expression.trim().lowercase()
             .replace("-", "_").replace(" ", "_")
         val image = when (normalizedExpression) {
-            "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> R.drawable.arisu_smile
-            "confident", "proud", "smug", "determined", "triumphant" -> R.drawable.arisu_jashinmanman
-            "surprised", "confused", "why", "shocked", "angry", "embarrassed", "puzzled" -> R.drawable.arisu_why
-            "default", "normal", "calm", "neutral" -> R.drawable.arisu_default
-            else -> R.drawable.arisu_default
+            "smile", "happy", "joy", "laugh", "cheerful", "pleased", "grin" -> "arisu/images/arisu_smile.jpg"
+            "confident", "proud", "smug", "determined", "triumphant" -> "arisu/images/arisu_jashinmanman.jpg"
+            "surprised", "confused", "why", "shocked", "angry", "embarrassed", "puzzled" -> "arisu/images/arisu_why.jpg"
+            "default", "normal", "calm", "neutral" -> "arisu/images/arisu_default.jpg"
+            else -> "arisu/images/arisu_default.jpg"
         }
-        // Run portrait transition first; then play body motion so both animations do not compete.
         changeCharacterWithVerticalMotion(image) { animateMotion(motion) }
-        val soundId = when (sound.lowercase()) {
-            "confirm" -> R.raw.confirm
-            "success" -> R.raw.success
-            "smile" -> R.raw.smile
-            "tell_sound" -> R.raw.tell_sound
-            "unknow" -> R.raw.unknow
-            "why" -> R.raw.why
-            "why2" -> R.raw.why2
-            "why3" -> R.raw.why3
-            "wtf" -> R.raw.wtf
-            else -> 0
+        val soundFile = when (sound.lowercase()) {
+            "confirm" -> "confirm.mp3"
+            "success" -> "success.mp3"
+            "smile" -> "smile.mp3"
+            "tell_sound" -> "tell_sound.mp3"
+            "unknow" -> "unknow.mp3"
+            "why" -> "why.mp3"
+            "why2" -> "why2.mp3"
+            "why3" -> "why3.mp3"
+            "wtf" -> "wtf.mp3"
+            else -> null
         }
-        if (soundId != 0) playSound(soundId)
+        if (soundFile != null) playSound("arisu/sounds/" + soundFile)
     }
 
-    private fun changeCharacterWithVerticalMotion(resourceId: Int, afterTransition: () -> Unit = {}) {
+    private fun changeCharacterWithVerticalMotion(assetPath: String, afterTransition: () -> Unit = {}) {
         val view = character
         if (view == null) {
             afterTransition()
             return
         }
-        val previous = view.tag as? Int
+        val previous = view.tag as? String
         view.animate().cancel()
-        if (previous == resourceId) {
+        if (previous == assetPath) {
             view.alpha = 1f
             view.translationY = 0f
             afterTransition()
@@ -1281,8 +1280,8 @@ class OverlayService : Service() {
             .alpha(0.35f)
             .setDuration(110)
             .withEndAction {
-                view.setImageResource(resourceId)
-                view.tag = resourceId
+                view.setImageBitmap(loadAssetBitmap(assetPath))
+                view.tag = assetPath
                 view.translationY = -dp(16).toFloat()
                 view.animate()
                     .translationY(0f)
@@ -1294,11 +1293,11 @@ class OverlayService : Service() {
             .start()
     }
 
-    private fun setCharacter(resourceId: Int) {
+    private fun setCharacter(assetPath: String) {
         character?.apply {
             animate().cancel()
-            setImageResource(resourceId)
-            tag = resourceId
+            setImageBitmap(loadAssetBitmap(assetPath))
+            tag = assetPath
             alpha = 1f
             translationY = 0f
             translationX = 0f
@@ -1340,10 +1339,32 @@ class OverlayService : Service() {
         oneBounce(count)
     }
 
-    private fun playDialogueVoice(soundId: Int) {
+    private fun loadAssetBitmap(path: String): android.graphics.Bitmap? {
+        return try {
+            assets.open(path).use { BitmapFactory.decodeStream(it) }
+        } catch (_: Exception) { null }
+    }
+
+    private fun createAssetMediaPlayer(path: String): MediaPlayer? {
+        return try {
+            val cached = java.io.File(cacheDir, "asset_" + path.replace('/', '_'))
+            if (!cached.exists() || cached.lastModified() < applicationInfo.lastUpdateTime) {
+                assets.open(path).use { input ->
+                    cached.outputStream().use { output -> input.copyTo(output) }
+                }
+                cached.setLastModified(applicationInfo.lastUpdateTime)
+            }
+            MediaPlayer().apply {
+                setDataSource(cached.absolutePath)
+                prepare()
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun playDialogueVoice(assetPath: String) {
         stopDialogueVoice()
         try {
-            dialogueVoicePlayer = MediaPlayer.create(this, soundId)?.apply {
+            dialogueVoicePlayer = createAssetMediaPlayer(assetPath)?.apply {
                 setOnCompletionListener { player ->
                     player.release()
                     if (dialogueVoicePlayer === player) dialogueVoicePlayer = null
@@ -1366,11 +1387,11 @@ class OverlayService : Service() {
         dialogueVoicePlayer = null
     }
 
-    private fun playSound(soundId: Int) {
+    private fun playSound(assetPath: String) {
         try {
             mediaPlayer?.setOnCompletionListener(null)
             mediaPlayer?.release()
-            mediaPlayer = MediaPlayer.create(this, soundId)?.apply {
+            mediaPlayer = createAssetMediaPlayer(assetPath)?.apply {
                 setOnCompletionListener { player ->
                     player.release()
                     if (mediaPlayer === player) mediaPlayer = null
