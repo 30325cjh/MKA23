@@ -928,10 +928,14 @@ class OverlayService : Service() {
         val text = typedText.ifEmpty {
             if (attachment != null) "첨부한 파일을 확인해줘." else return
         }
-        val summonName = if (activeCharacter == "arisu") "케이" else "아리스"
-        val mentionsPartner = text.contains(summonName) || text.contains(if (activeCharacter == "arisu") "K" else "아리스")
-        val summonIntent = listOf("불러", "와줘", "와 주세요", "같이", "참여", "데려와", "데리고", "불러와", "오라고", "나와", "등장", "호출", "소환", "함께해", "합류").any { text.contains(it) }
-        if (mentionsPartner && summonIntent) enableCompanionMode()
+        val summonIntent = listOf(
+            "데려와", "데려와줘", "데려와 줘", "데려와달라", "데려와 주세요", "데리고 와",
+            "불러와", "불러 와", "불러줘", "불러 줘", "불러달라", "불러 주세요",
+            "와줘", "와 줘", "와주세요", "와 주세요", "같이 와", "함께 와",
+            "합류해", "합류시켜", "소환해", "등장시켜", "참여시켜"
+        ).any { text.contains(it) }
+        // 상대 캐릭터 이름을 따로 말하지 않아도 명확히 데려오라고 하면 즉시 동행 모드로 전환한다.
+        if (summonIntent && !companionsPresent) enableCompanionMode()
         input.text.clear()
         hideChatKeyboard(input)
         expandChatHistory()
