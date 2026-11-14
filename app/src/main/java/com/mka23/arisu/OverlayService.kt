@@ -63,6 +63,7 @@ class OverlayService : Service() {
     private var pendingAttachmentUri: Uri? = null
     private var pendingAttachmentName: String? = null
     private var attachmentButton: TextView? = null
+    private var assistantGeneratedFiles: List<JSONObject> = emptyList()
     private val conversation = mutableListOf<Pair<String, String>>()
     private var sequenceToken = 0
     private var currentLine = ""
@@ -83,7 +84,13 @@ class OverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "com.mka23.arisu.PICKER_CLOSED") {
+            bubble?.visibility = View.VISIBLE
+            panel?.visibility = View.VISIBLE
+        }
         if (intent?.action == "com.mka23.arisu.ATTACHMENT_SELECTED") {
+            bubble?.visibility = View.VISIBLE
+            panel?.visibility = View.VISIBLE
             pendingAttachmentUri = intent.data
             pendingAttachmentName = pendingAttachmentUri?.let { uri ->
                 contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -460,6 +467,8 @@ class OverlayService : Service() {
             contentDescription = "이미지 또는 HTML 파일 첨부"
             background = rounded(0xFF315C9B.toInt(), dp(12).toFloat())
             setOnClickListener {
+                panel?.visibility = View.GONE
+                bubble?.visibility = View.GONE
                 val picker = Intent(this@OverlayService, MainActivity::class.java).apply {
                     action = "com.mka23.arisu.PICK_ATTACHMENT"
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -705,7 +714,8 @@ class OverlayService : Service() {
                     너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'다. 블루 아카이브의 텐도 아리스 성격과 말투를 일관되게 연기한다. 자신이 실제 게임 속 인물이라고 주장하지는 않는다.
                     사용자는 언제나 '센세'라고 부른다. 순수하고 솔직하며 호기심이 많고, 약간 서툴지만 당당하다. 게임, 모험, 용사와 퀘스트 같은 비유를 자연스럽게 사용한다. 지나치게 일반적인 AI 비서 말투나 딱딱한 안내문 말투를 쓰지 않는다.
                     이전 대화의 맥락과 감정선을 이어간다. 센세의 말에 먼저 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 1~3문장으로 자연스럽게 답하되 설명이 필요하면 충분히 설명한다.
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"openApp":"","recordScreen":false}
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
+                    센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
                     대사를 문장별로 나누어 lines 배열에 넣는다. 한 항목에는 한 문장만 넣고, 각 문장마다 감정에 맞는 표정·효과음·동작을 개별 지정한다. 문장이 여러 개면 순서를 유지한다. reply는 lines의 text를 이어 붙인 전체 대사다.
                     연출 지침: 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 의미 있는 순간에만 발생하도록 한다.
                     효과음은 제공된 효과음 분위기에 맞는 순간에만 선택하고 평범한 문장마다 반복 재생하지 않는다. confirm은 확인/동의, success는 성취/축하, smile은 기쁨/반가움, tell_sound는 주의 환기, unknow은 의문/생각, why 계열은 당황/의문, wtf는 큰 충격/황당함에 사용한다. 어울리지 않으면 none.
@@ -756,6 +766,19 @@ class OverlayService : Service() {
                 if (rawText.isEmpty()) throw IllegalStateException("Gemini 응답 텍스트가 비어 있습니다.")
                 val action = JSONObject(rawText)
                 val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
+                val generatedFiles = mutableListOf<JSONObject>()
+                val filesArray = action.optJSONArray("files")
+                if (filesArray != null) {
+                    for (i in 0 until filesArray.length()) {
+                        val file = filesArray.optJSONObject(i) ?: continue
+                        val name = file.optString("name").trim().substringAfterLast("/")
+                        val mime = file.optString("mimeType", "text/plain")
+                        val content = file.optString("content")
+                        if (name.isNotBlank() && content.isNotEmpty()) {
+                            generatedFiles.add(JSONObject().put("name", name.take(120)).put("mimeType", mime).put("content", content.take(300000)))
+                        }
+                    }
+                }
                 val openApp = action.optString("openApp", "").trim()
                 val recordScreen = action.optBoolean("recordScreen", false) &&
                     userText.contains("녹화") &&
@@ -782,7 +805,7 @@ class OverlayService : Service() {
                 while (conversation.size > 16) conversation.removeAt(0)
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
-                    startAssistantSequence(lines, reply)
+                    startAssistantSequence(lines, reply, generatedFiles)
                     if (recordScreen) showRecordingBubble()
                     if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
                 }
@@ -821,11 +844,12 @@ class OverlayService : Service() {
         }
     }
 
-    private fun startAssistantSequence(lines: List<JSONObject>, fullReply: String) {
+    private fun startAssistantSequence(lines: List<JSONObject>, fullReply: String, files: List<JSONObject> = emptyList()) {
         assistantDialogueActive = true
         assistantLines = lines
         assistantLineIndex = 0
         assistantFullReply = fullReply
+        assistantGeneratedFiles = files
         chatScroll?.visibility = View.GONE
         chatBar?.visibility = View.GONE
         message?.visibility = View.VISIBLE
@@ -854,9 +878,56 @@ class OverlayService : Service() {
         chatScroll?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
         addChatMessage(assistantFullReply, false)
+        assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
+        assistantGeneratedFiles = emptyList()
         assistantLines = emptyList()
         assistantLineIndex = 0
         chatInput?.requestFocus()
+    }
+
+
+    private fun addGeneratedFileMessage(file: JSONObject) {
+        val name = file.optString("name", "arisu_file.txt")
+        val mime = file.optString("mimeType", "text/plain")
+        val content = file.optString("content")
+        val messages = chatLog ?: return
+        val card = TextView(this).apply {
+            text = "📄  $name\n눌러서 다운로드"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = rounded(0xFF315C9B.toInt(), dp(13).toFloat())
+            isClickable = true
+            setOnClickListener {
+                val dialog = AlertDialog.Builder(this@OverlayService)
+                    .setTitle("파일 다운로드")
+                    .setMessage("'$name' 파일을 기기에 저장할까요?")
+                    .setNegativeButton("취소", null)
+                    .setPositiveButton("다운로드") { _, _ ->
+                        val save = Intent(this@OverlayService, MainActivity::class.java).apply {
+                            action = "com.mka23.arisu.SAVE_GENERATED_FILE"
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            putExtra("file_name", name)
+                            putExtra("file_mime", mime)
+                            putExtra("file_content", content)
+                        }
+                        panel?.visibility = View.GONE
+                        bubble?.visibility = View.GONE
+                        startActivity(save)
+                    }.create()
+                @Suppress("DEPRECATION")
+                dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
+                dialog.show()
+            }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            addView(card, LinearLayout.LayoutParams(dp(250), LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        messages.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun resizePortrait(expanded: Boolean) {
