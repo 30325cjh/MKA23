@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer
+import android.media.audiofx.LoudnessEnhancer
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -57,6 +59,10 @@ class OverlayService : Service() {
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
     private var bgmPlayer: MediaPlayer? = null
+    private var bgmEnhancer: LoudnessEnhancer? = null
+    private var pendingAttachmentUri: Uri? = null
+    private var pendingAttachmentName: String? = null
+    private var attachmentButton: TextView? = null
     private val conversation = mutableListOf<Pair<String, String>>()
     private var sequenceToken = 0
     private var currentLine = ""
@@ -75,6 +81,21 @@ class OverlayService : Service() {
     private var recordingPaused = false
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "com.mka23.arisu.ATTACHMENT_SELECTED") {
+            pendingAttachmentUri = intent.data
+            pendingAttachmentName = pendingAttachmentUri?.let { uri ->
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val column = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                }
+            } ?: "첨부 파일"
+            attachmentButton?.text = "📎"
+            Toast.makeText(this, "$pendingAttachmentName 첨부 완료", Toast.LENGTH_SHORT).show()
+        }
+        return START_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -122,8 +143,15 @@ class OverlayService : Service() {
         if (bubble != null) return
         val icon = ImageView(this).apply {
             setImageResource(R.drawable.icon)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            background = rounded(Color.TRANSPARENT, dp(16).toFloat())
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(19).toFloat()
+                setColor(0xFF315C9B.toInt())
+                setStroke(dp(2), 0xFFB7D9FF.toInt())
+            }
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            clipToOutline = true
             elevation = dp(8).toFloat()
             contentDescription = "아리스 열기"
         }
@@ -260,8 +288,19 @@ class OverlayService : Service() {
 
     private fun bgmPreferences() = getSharedPreferences("arisu_bgm_settings", Context.MODE_PRIVATE)
 
-    private fun currentBgmVolume(): Float =
-        (bgmPreferences().getInt("volume", 55).coerceIn(0, 100) / 100f)
+    private fun currentBgmProgress(): Int = bgmPreferences().getInt("volume", 55).coerceIn(0, 100)
+
+    private fun currentBgmVolume(): Float {
+        val linear = currentBgmProgress() / 100f
+        return linear * linear
+    }
+
+    private fun applyBgmVolume(progress: Int) {
+        val linear = progress.coerceIn(0, 100) / 100f
+        val perceptual = linear * linear
+        bgmPlayer?.setVolume(perceptual, perceptual)
+        bgmPreferences().edit().putInt("volume", progress.coerceIn(0, 100)).apply()
+    }
 
     private fun startBgm() {
         if (bgmPlayer?.isPlaying == true) return
@@ -271,6 +310,13 @@ class OverlayService : Service() {
                 isLooping = true
                 val volume = currentBgmVolume()
                 setVolume(volume, volume)
+                try {
+                    bgmEnhancer?.release()
+                    bgmEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                        setTargetGain(600)
+                        enabled = true
+                    }
+                } catch (_: Exception) { bgmEnhancer = null }
                 setOnErrorListener { player, _, _ ->
                     player.release()
                     if (bgmPlayer === player) bgmPlayer = null
@@ -290,14 +336,14 @@ class OverlayService : Service() {
             setPadding(dp(22), dp(12), dp(22), dp(8))
         }
         val valueLabel = TextView(this).apply {
-            text = "BGM 볼륨 " + (currentBgmVolume() * 100).toInt() + "%"
+            text = "BGM 볼륨 ${currentBgmProgress()}% · 음량 보강"
             setTextColor(Color.WHITE)
             textSize = 15f
         }
         layout.addView(valueLabel)
         val slider = SeekBar(this).apply {
             max = 100
-            progress = (currentBgmVolume() * 100).toInt()
+            progress = currentBgmProgress()
         }
         layout.addView(slider, LinearLayout.LayoutParams(-1, dp(48)))
         val dialog = AlertDialog.Builder(this)
@@ -309,10 +355,8 @@ class OverlayService : Service() {
         dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val volume = progress / 100f
-                bgmPlayer?.setVolume(volume, volume)
-                valueLabel.text = "BGM 볼륨 " + progress + "%"
-                if (fromUser) bgmPreferences().edit().putInt("volume", progress).apply()
+                applyBgmVolume(progress)
+                valueLabel.text = "BGM 볼륨 ${progress}% · 음량 보강"
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -408,6 +452,23 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(8), 0, 0)
         }
+        val attachButton = TextView(this).apply {
+            text = if (pendingAttachmentUri == null) "＋" else "📎"
+            textSize = 23f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "이미지 또는 HTML 파일 첨부"
+            background = rounded(0xFF315C9B.toInt(), dp(12).toFloat())
+            setOnClickListener {
+                val picker = Intent(this@OverlayService, MainActivity::class.java).apply {
+                    action = "com.mka23.arisu.PICK_ATTACHMENT"
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+                startActivity(picker)
+            }
+        }
+        attachmentButton = attachButton
+        bar.addView(attachButton, LinearLayout.LayoutParams(dp(46), dp(48)).apply { rightMargin = dp(6) })
         val input = EditText(this).apply {
             hint = "아리스에게 메시지 입력..."
             setHintTextColor(0xFFAAAAAA.toInt())
@@ -440,12 +501,20 @@ class OverlayService : Service() {
 
     private fun submitChatMessage() {
         val input = chatInput ?: return
-        val text = input.text.toString().trim()
-        if (text.isEmpty()) return
+        val typedText = input.text.toString().trim()
+        val attachment = pendingAttachmentUri
+        val attachmentName = pendingAttachmentName
+        val text = typedText.ifEmpty {
+            if (attachment != null) "첨부한 파일을 확인해줘." else return
+        }
         input.text.clear()
+        pendingAttachmentUri = null
+        pendingAttachmentName = null
+        attachmentButton?.text = "＋"
         ensureApiKey {
-            addChatMessage(text, true)
-            requestGemini(text)
+            val shownText = if (attachment != null) "$text\n📎 ${attachmentName ?: "첨부 파일"}" else text
+            addChatMessage(shownText, true)
+            requestGemini(text, 0, attachment, attachmentName)
         }
     }
 
@@ -592,7 +661,7 @@ class OverlayService : Service() {
         dialog.show()
     }
 
-    private fun requestGemini(userText: String, retryCount: Int = 0) {
+    private fun requestGemini(userText: String, retryCount: Int = 0, attachmentUri: Uri? = null, attachmentName: String? = null) {
         if (retryCount == 0) {
             conversation.add("user" to userText)
             while (conversation.size > 16) conversation.removeAt(0)
@@ -610,10 +679,27 @@ class OverlayService : Service() {
             var connection: HttpURLConnection? = null
             try {
                 val contents = JSONArray()
-                conversation.forEach { (role, text) ->
-                    contents.put(JSONObject()
-                        .put("role", role)
-                        .put("parts", JSONArray().put(JSONObject().put("text", text))))
+                conversation.forEachIndexed { index, (role, text) ->
+                    val parts = JSONArray().put(JSONObject().put("text", text))
+                    if (attachmentUri != null && index == conversation.lastIndex && role == "user") {
+                        val mime = contentResolver.getType(attachmentUri) ?: "application/octet-stream"
+                        val bytes = contentResolver.openInputStream(attachmentUri)?.use { it.readBytes() }
+                            ?: throw IllegalStateException("첨부 파일을 읽을 수 없습니다.")
+                        if (mime.startsWith("image/")) {
+                            if (bytes.size > 12 * 1024 * 1024) throw IllegalStateException("이미지는 12MB 이하로 첨부해 주세요.")
+                            parts.put(JSONObject().put("inlineData", JSONObject()
+                                .put("mimeType", mime)
+                                .put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))))
+                        } else if (mime == "text/html" || mime == "application/xhtml+xml" ||
+                            (attachmentName ?: "").endsWith(".html", true) ||
+                            (attachmentName ?: "").endsWith(".htm", true)) {
+                            val html = String(bytes, Charsets.UTF_8).take(200000)
+                            parts.put(JSONObject().put("text", "[첨부 HTML 파일: ${attachmentName ?: "game.html"}]\n$html"))
+                        } else {
+                            throw IllegalStateException("현재는 이미지 또는 HTML 파일만 첨부할 수 있습니다.")
+                        }
+                    }
+                    contents.put(JSONObject().put("role", role).put("parts", parts))
                 }
                 val systemPrompt = """
                     너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'다. 블루 아카이브의 텐도 아리스 성격과 말투를 일관되게 연기한다. 자신이 실제 게임 속 인물이라고 주장하지는 않는다.
@@ -717,7 +803,7 @@ class OverlayService : Service() {
                         statusText?.text = "Gemini 서버 혼잡! ${delayMs / 1000}초 후 재시도합니다... (${retryCount + 1}/3)"
                         handler.postDelayed({
                             (loading.parent as? LinearLayout)?.removeView(loading)
-                            if (panel != null) requestGemini(userText, retryCount + 1)
+                            if (panel != null) requestGemini(userText, retryCount + 1, attachmentUri, attachmentName)
                         }, delayMs)
                     } else {
                         (loading.parent as? LinearLayout)?.removeView(loading)
@@ -1068,6 +1154,8 @@ class OverlayService : Service() {
         mediaPlayer = null
         bgmPlayer?.release()
         bgmPlayer = null
+        bgmEnhancer?.release()
+        bgmEnhancer = null
         networkExecutor.shutdownNow()
         super.onDestroy()
     }
