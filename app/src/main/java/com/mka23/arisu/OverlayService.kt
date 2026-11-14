@@ -479,7 +479,7 @@ class OverlayService : Service() {
                 playSound(R.raw.why)
                 playDialogueVoice(R.raw.command)
                 dialogueStage = 3
-                startTypewriter("명령を 내려주세요!")
+                startTypewriter("명령을 내려주세요!")
             }
             3 -> {
                 stopDialogueVoice()
