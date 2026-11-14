@@ -58,6 +58,7 @@ class OverlayService : Service() {
     private var chatScroll: ScrollView? = null
     private var chatInput: EditText? = null
     private var mediaPlayer: MediaPlayer? = null
+    private var dialogueVoicePlayer: MediaPlayer? = null
     private var bgmPlayer: MediaPlayer? = null
     private var bgmEnhancer: LoudnessEnhancer? = null
     private var ttsPlayer: MediaPlayer? = null
@@ -220,9 +221,11 @@ class OverlayService : Service() {
         chatLog = null
         chatScroll = null
         conversation.clear()
+        stopDialogueVoice()
 
         setCharacter(R.drawable.arisu_default)
         message?.text = "아리스 연결중○○○"
+        playDialogueVoice(R.raw.login_loading)
         playSound(R.raw.unknow)
 
         val progress = arrayOf("아리스 연결중●○○", "아리스 연결중●●○", "아리스 연결중●●●")
@@ -236,6 +239,7 @@ class OverlayService : Service() {
             setCharacter(R.drawable.arisu_smile)
             animateMotion("bounce")
             playSound(R.raw.success)
+            playDialogueVoice(R.raw.login_success)
             dialogueStage = 1
             startTypewriter("로그인 성공!")
         }, 1750L)
@@ -460,20 +464,27 @@ class OverlayService : Service() {
         waitingForTap = false
         when (dialogueStage) {
             1 -> {
+                stopDialogueVoice()
                 setCharacter(R.drawable.arisu_default)
                 animateMotion("double_bounce")
                 playSound(R.raw.smile)
+                playDialogueVoice(R.raw.greeting)
                 dialogueStage = 2
                 startTypewriter("반갑습니다, 센세!")
             }
             2 -> {
+                stopDialogueVoice()
                 setCharacter(R.drawable.arisu_jashinmanman)
                 animateMotion("bounce")
                 playSound(R.raw.why)
+                playDialogueVoice(R.raw.command)
                 dialogueStage = 3
-                startTypewriter("명령을 내려주세요!")
+                startTypewriter("명령を 내려주세요!")
             }
-            3 -> showChatBar()
+            3 -> {
+                stopDialogueVoice()
+                showChatBar()
+            }
         }
     }
 
@@ -1458,6 +1469,32 @@ class OverlayService : Service() {
         oneBounce(count)
     }
 
+    private fun playDialogueVoice(soundId: Int) {
+        stopDialogueVoice()
+        try {
+            dialogueVoicePlayer = MediaPlayer.create(this, soundId)?.apply {
+                setOnCompletionListener { player ->
+                    player.release()
+                    if (dialogueVoicePlayer === player) dialogueVoicePlayer = null
+                }
+                start()
+            }
+        } catch (_: Exception) {
+            stopDialogueVoice()
+        }
+    }
+
+    private fun stopDialogueVoice() {
+        dialogueVoicePlayer?.let { player ->
+            try {
+                player.setOnCompletionListener(null)
+                if (player.isPlaying) player.stop()
+            } catch (_: Exception) {}
+            try { player.release() } catch (_: Exception) {}
+        }
+        dialogueVoicePlayer = null
+    }
+
     private fun playSound(soundId: Int) {
         try {
             mediaPlayer?.setOnCompletionListener(null)
@@ -1477,6 +1514,7 @@ class OverlayService : Service() {
 
     private fun closePanel() {
         sequenceToken++
+        stopDialogueVoice()
         stopTtsPlayback()
         typingRunnable?.let { handler.removeCallbacks(it) }
         typingRunnable = null
