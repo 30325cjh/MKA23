@@ -925,9 +925,18 @@ class OverlayService : Service() {
         val typedText = rawTypedText
         val attachment = pendingAttachmentUri
         val attachmentName = pendingAttachmentName
+        val autonomousTurn = typedText.isEmpty() && attachment == null
         val text = typedText.ifEmpty {
-            if (attachment != null) "첨부한 파일을 확인해줘." else return
+            if (attachment != null) "첨부한 파일을 확인해줘."
+            else "센세가 이번에는 말을 걸지 않고 너희에게 자율적으로 대화를 진행해 보라고 했습니다. 현재 상황과 직전 대화의 맥락을 바탕으로 아리스와 케이가 자연스럽게 서로 대화를 시작하고 이어가세요. 센세에게 억지로 질문하거나 답변을 요구하지 말고, 두 사람이 주고받는 대화 한 차례를 보여주세요."
         }
+        val addressedPartner = if (companionsPresent) {
+            when {
+                activeCharacter == "kei" && text.contains("아리스") -> "arisu"
+                activeCharacter == "arisu" && text.contains("케이") -> "kei"
+                else -> null
+            }
+        } else null
         val summonIntent = listOf(
             "데려와", "데려와줘", "데려와 줘", "데려와달라", "데려와 주세요", "데리고 와",
             "불러와", "불러 와", "불러줘", "불러 줘", "불러달라", "불러 주세요",
@@ -944,8 +953,8 @@ class OverlayService : Service() {
         attachmentButton?.text = "＋"
         ensureApiKey {
             val shownText = if (attachment != null) "$text\n📎 ${attachmentName ?: "첨부 파일"}" else text
-            addChatMessage(shownText, true)
-            requestGemini(text, 0, attachment, attachmentName)
+            if (!autonomousTurn) addChatMessage(shownText, true)
+            requestGemini(text, 0, attachment, attachmentName, addressedPartner)
         }
     }
 
@@ -1090,21 +1099,22 @@ class OverlayService : Service() {
         dialog.show()
     }
 
-    private fun requestGemini(userText: String, retryCount: Int = 0, attachmentUri: Uri? = null, attachmentName: String? = null) {
+    private fun requestGemini(userText: String, retryCount: Int = 0, attachmentUri: Uri? = null, attachmentName: String? = null, preferredSpeaker: String? = null) {
         if (retryCount == 0) {
             conversation.add("user" to userText)
             while (conversation.size > 16) conversation.removeAt(0)
         }
         val requestCharacter = activeCharacter
         val requestHasCompanions = companionsPresent
-        val loading = addChatMessage(if (requestCharacter == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false)
-        val partnerLoading = if (requestHasCompanions) addChatMessage(if (requestCharacter == "kei") "아리스가 생각 중..." else "케이가 생각 중...", false) else null
+        val firstSpeaker = preferredSpeaker ?: requestCharacter
+        val loading = addChatMessage(if (firstSpeaker == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false)
+        val partnerLoading = if (requestHasCompanions) addChatMessage(if (firstSpeaker == "kei") "아리스가 생각 중..." else "케이가 생각 중...", false) else null
         val key = getApiKey()?.trim()
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
             (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
             Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
-            showApiKeyDialog { requestGemini(userText, 1, attachmentUri, attachmentName) }
+            showApiKeyDialog { requestGemini(userText, 1, attachmentUri, attachmentName, preferredSpeaker) }
             return
         }
 
@@ -1199,7 +1209,17 @@ class OverlayService : Service() {
                     코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
                     현재는 일반 비서 모드다.
                 """.trimIndent()
-                val systemPrompt = baseSystemPrompt + if (requestHasCompanions) """
+                val speakerPriorityPrompt = if (requestHasCompanions && preferredSpeaker != null) """
+                    
+                    [센세가 특정 캐릭터를 직접 지목함 — 응답 순서 최우선]
+                    이번 메시지에서 센세가 직접 말을 건 대상은 ${if (preferredSpeaker == "kei") "텐도 케이" else "텐도 아리스"}다. 반드시 ${if (preferredSpeaker == "kei") "케이" else "아리스"}가 첫 번째 대사를 말하며, 그 캐릭터가 센세의 질문이나 요청에 먼저 직접 답한다. 그 다음 다른 캐릭터가 자연스럽게 끼어들거나 반응한다. 첫 대사의 speaker는 "$preferredSpeaker"로 고정한다. 기본 선택 캐릭터가 누구인지는 응답 순서에 영향을 주지 않는다.
+                """.trimIndent() else ""
+                val autonomousPrompt = if (requestHasCompanions && userText.startsWith("센세가 이번에는 말을 걸지 않고")) """
+                    
+                    [자율 대화 진행]
+                    센세가 빈 전송을 눌러 두 사람에게 자율 대화를 맡겼다. 두 사람이 서로에게 먼저 말을 걸고 자연스럽게 대화를 시작한다. 첫 대사는 현재 선택된 캐릭터가 아니라 두 사람 중 맥락상 먼저 말할 캐릭터가 한다. 센세에게 직접 답변을 요구하지 말고, 두 사람 사이의 대화를 한 차례 충분히 이어간다. lines에는 두 사람의 대사를 각각 speaker와 함께 넣는다.
+                """.trimIndent() else ""
+                val systemPrompt = baseSystemPrompt + speakerPriorityPrompt + autonomousPrompt + if (requestHasCompanions) """
 
                     [두 캐릭터 동시 대화 모드 — 화자별 페르소나 분리]
                     현재 아리스와 케이가 같은 공간에 함께 있다. 두 사람은 서로 다른 몸과 독립된 인격을 가진다. 센세 한 명과 같은 공간에서 셋이 자연스럽게 대화한다.
@@ -1306,6 +1326,10 @@ class OverlayService : Service() {
                             .put("motion", action.optString("motion", "none"))
                             .put("speaker", requestCharacter))
                     }
+                }
+                if (requestHasCompanions && preferredSpeaker != null) {
+                    val preferredIndex = lines.indexOfFirst { it.optString("speaker") == preferredSpeaker }
+                    if (preferredIndex > 0) lines.add(0, lines.removeAt(preferredIndex))
                 }
                 val historyReply = if (requestHasCompanions || aiSummonsPartner) {
                     lines.joinToString("\n") { line ->
