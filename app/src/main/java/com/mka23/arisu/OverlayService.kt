@@ -15,8 +15,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
@@ -43,7 +41,6 @@ import java.net.URL
 import java.security.KeyStore
 import java.util.concurrent.Executors
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
@@ -539,10 +536,6 @@ class OverlayService : Service() {
             textSize = 23f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setOnLongClickListener {
-                showApiKeyDialog()
-                true
-            }
         }
         panelTitle = title
         header.addView(title, FrameLayout.LayoutParams(-1, dp(44), Gravity.CENTER))
@@ -986,77 +979,14 @@ class OverlayService : Service() {
         if (!getApiKey().isNullOrBlank()) {
             onReady()
         } else {
-            showApiKeyDialog(onReady)
+            Toast.makeText(this, "내장 Gemini API 키를 찾을 수 없습니다. 앱을 최신 빌드로 다시 설치해주세요.", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun showApiKeyDialog(onSaved: (() -> Unit)? = null) {
-        val input = EditText(this).apply {
-            hint = "AQ. 또는 AIza로 시작하는 키"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine(true)
-            setText(getApiKey().orEmpty())
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Gemini API 키")
-            .setMessage("Google AI Studio에서 발급한 API 키를 입력하세요. 키는 이 기기에 암호화해 저장합니다.")
-            .setView(input)
-            .setNegativeButton("취소", null)
-            .setPositiveButton("저장", null)
-            .create()
-        @Suppress("DEPRECATION")
-        dialog.window?.setType(if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE)
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val key = input.text.toString().trim()
-                if (key.length < 20) {
-                    input.error = "올바른 API 키를 입력해주세요."
-                } else {
-                    try {
-                        saveApiKey(key)
-                        dialog.dismiss()
-                        Toast.makeText(this, "Gemini API 키 저장 완료", Toast.LENGTH_SHORT).show()
-                        onSaved?.invoke()
-                    } catch (e: Exception) {
-                        input.error = "키 저장 실패: ${e.message}"
-                    }
-                }
-            }
-        }
-        dialog.show()
     }
 
     private fun apiPreferences() = getSharedPreferences("arisu_secure_settings", Context.MODE_PRIVATE)
 
-    private fun getOrCreateSecretKey(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val alias = "arisu_gemini_api_key"
-        if (keyStore.containsAlias(alias)) return keyStore.getKey(alias, null) as SecretKey
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-        )
-        return generator.generateKey()
-    }
-
-    private fun saveApiKey(value: String) {
-        val cleanValue = value.trim()
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
-        val encrypted = cipher.doFinal(cleanValue.toByteArray(Charsets.UTF_8))
-        apiPreferences().edit()
-            .putString("api_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString("api_value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .apply()
-    }
-
     private fun getApiKey(): String? {
+        BuildConfig.GEMINI_API_KEY.trim().takeIf { it.isNotEmpty() }?.let { return it }
         return try {
             val prefs = apiPreferences()
             val ivText = prefs.getString("api_iv", null) ?: return null
@@ -1114,7 +1044,7 @@ class OverlayService : Service() {
             (loading.parent as? LinearLayout)?.removeView(loading)
             (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
             Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
-            showApiKeyDialog { requestGemini(userText, 1, attachmentUri, attachmentName, preferredSpeaker) }
+            Toast.makeText(this, "내장 Gemini API 키를 찾을 수 없습니다. 앱을 최신 빌드로 다시 설치해주세요.", Toast.LENGTH_LONG).show()
             return
         }
 
