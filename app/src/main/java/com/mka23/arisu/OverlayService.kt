@@ -1134,6 +1134,7 @@ class OverlayService : Service() {
         assistantLineIndex = 0
         assistantFullReply = fullReply
         assistantGeneratedFiles = files
+        speakReplyAutomatically(fullReply)
         chatScroll?.visibility = View.GONE
         chatBar?.visibility = View.GONE
         message?.visibility = View.VISIBLE
@@ -1162,7 +1163,6 @@ class OverlayService : Service() {
         chatScroll?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
         addChatMessage(assistantFullReply, false)
-        speakReplyAutomatically(assistantFullReply)
         assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
         assistantGeneratedFiles = emptyList()
         assistantLines = emptyList()
