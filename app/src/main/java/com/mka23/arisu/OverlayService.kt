@@ -1400,6 +1400,29 @@ class OverlayService : Service() {
         showAssistantLine()
     }
 
+    private fun isCallingSensei(text: String): Boolean {
+        val value = text.trim()
+        if (value.isEmpty()) return false
+
+        // 문장 첫머리의 직접 호칭: "센세!", "센세, 잠깐만요", "센세 지금..."
+        val startsWithCall = Regex("""^센세(?=$|[,，!！?？.。~…\s])""").containsMatchIn(value)
+        if (startsWithCall) {
+            val rest = value.removePrefix("센세").trimStart()
+            if (rest.isEmpty() || rest.first() in ",，!！?？.。~…") return true
+            val nextWord = rest.takeWhile { !it.isWhitespace() && it !in ",，!！?？.。~…" }
+            val particlesOrReferences = setOf(
+                "가", "는", "도", "를", "를", "의", "에게", "한테", "께", "께서",
+                "와", "과", "랑", "부터", "까지", "보다", "처럼", "조차", "마저",
+                "라는", "이라고", "이란", "때문에", "덕분에", "말씀", "생각"
+            )
+            if (nextWord in particlesOrReferences) return false
+            return true
+        }
+
+        // 문장 끝에서 이름을 부르는 형태: "고맙습니다, 센세!" / "기다려요 센세."
+        return Regex("""(?:[,，]\s*|\s+)센세[.!！?？。~…]*$""").containsMatchIn(value)
+    }
+
     private fun showAssistantLine() {
         val line = assistantLines.getOrNull(assistantLineIndex) ?: return finishAssistantSequence()
         val speaker = if (companionsPresent) {
@@ -1417,7 +1440,7 @@ class OverlayService : Service() {
             line.optString("motion", "none")
         )
         val lineText = line.optString("text")
-        if (lineText.contains("센세")) {
+        if (isCallingSensei(lineText)) {
             playSound(if (speaker == "kei") "kei/sounds/Ksensei.mp3" else "arisu/sounds/Asensei.mp3")
         }
         startTypewriter(lineText)
