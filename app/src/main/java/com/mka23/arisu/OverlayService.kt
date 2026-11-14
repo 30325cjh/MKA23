@@ -1347,11 +1347,8 @@ class OverlayService : Service() {
     private fun createAssetMediaPlayer(path: String): MediaPlayer? {
         return try {
             val cached = java.io.File(cacheDir, "asset_" + path.replace('/', '_'))
-            if (!cached.exists() || cached.lastModified() < applicationInfo.lastUpdateTime) {
-                assets.open(path).use { input ->
-                    cached.outputStream().use { output -> input.copyTo(output) }
-                }
-                cached.setLastModified(applicationInfo.lastUpdateTime)
+            assets.open(path).use { input ->
+                cached.outputStream().use { output -> input.copyTo(output) }
             }
             MediaPlayer().apply {
                 setDataSource(cached.absolutePath)
