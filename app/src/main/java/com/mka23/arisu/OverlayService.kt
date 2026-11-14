@@ -671,7 +671,7 @@ class OverlayService : Service() {
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
             Toast.makeText(this, "Gemini API 키를 다시 설정해주세요.", Toast.LENGTH_LONG).show()
-            showApiKeyDialog { requestGemini(userText) }
+            showApiKeyDialog { requestGemini(userText, 1, attachmentUri, attachmentName) }
             return
         }
 
