@@ -264,6 +264,79 @@ class OverlayService : Service() {
         dialog.show()
     }
 
+    private fun showCharacterControlDialog() {
+        if (!companionsPresent) {
+            showCharacterSelectDialog()
+            return
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("누구를 내보내겠습니까?")
+            .setItems(arrayOf("텐도 아리스", "텐도 케이")) { _, which ->
+                dismissCompanion(if (which == 0) "arisu" else "kei")
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun dismissCompanion(leavingCharacter: String) {
+        if (!companionsPresent) return
+        val leavingIsPrimary = leavingCharacter == assistantBaseCharacter
+        val leavingName = if (leavingCharacter == "arisu") "아리스" else "케이"
+        val farewell = if (leavingCharacter == "arisu") {
+            "아리스는 이만 물러나겠습니다, 센세!"
+        } else {
+            "흥... 저는 이만 가보겠습니다, 센세."
+        }
+
+        sequenceToken++
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typingRunnable = null
+        typing = false
+        waitingForTap = false
+        assistantDialogueActive = false
+        assistantLines = emptyList()
+        assistantLineIndex = 0
+        stopDialogueVoice()
+        message?.visibility = View.VISIBLE
+        message?.text = farewell
+        if (leavingCharacter == "arisu") playSound("arisu/sounds/smile.mp3")
+        else playSound("kei/sounds/sigh.mp3")
+
+        handler.postDelayed({
+            val stage = portraitStage
+            val primary = primaryCharacterView
+            val partner = partnerCharacter
+            val remainingCharacter = if (leavingCharacter == "arisu") "kei" else "arisu"
+
+            if (leavingIsPrimary && partner != null) {
+                try { stage?.removeView(primary) } catch (_: Exception) {}
+                partner.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                primaryCharacterView = partner
+                character = partner
+                partnerCharacter = null
+            } else {
+                try { stage?.removeView(partner) } catch (_: Exception) {}
+                partnerCharacter = null
+                primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                character = primaryCharacterView
+            }
+
+            companionsPresent = false
+            assistantBaseCharacter = remainingCharacter
+            activeCharacter = remainingCharacter
+            getSharedPreferences("assistant_character", Context.MODE_PRIVATE)
+                .edit().putString("active", remainingCharacter).apply()
+            panelTitle?.text = if (remainingCharacter == "arisu") "아리스" else "케이"
+            chatInput?.hint = if (remainingCharacter == "arisu") "아리스에게 메시지 입력..." else "케이에게 메시지 입력..."
+            message?.visibility = View.GONE
+            startBgm()
+            resizePortrait(false)
+            panel?.requestLayout()
+        }, 1900L)
+    }
+
     private fun keiLaunchPreferences() = getSharedPreferences("kei_launch_settings", Context.MODE_PRIVATE)
 
     private fun hasCompletedKeiInitialLogin(): Boolean =
@@ -487,6 +560,20 @@ class OverlayService : Service() {
             setOnClickListener { showBgmVolumeDialog() }
         }
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
+        val characterControlButton = TextView(this).apply {
+            text = "⇄"
+            textSize = 21f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "캐릭터 선택 및 퇴장"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF315C9B.toInt())
+            }
+            elevation = dp(3).toFloat()
+            setOnClickListener { showCharacterControlDialog() }
+        }
+        header.addView(characterControlButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END or Gravity.TOP))
         root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
