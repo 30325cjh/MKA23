@@ -188,7 +188,7 @@ class OverlayService : Service() {
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
                     if (dragging) {
-                        bubbleParams.x = (startX + downRawX - event.rawX).toInt().coerceAtLeast(0)
+                        bubbleParams.x = (startX + event.rawX - downRawX).toInt().coerceAtLeast(0)
                         bubbleParams.y = (startY + event.rawY - downRawY).toInt().coerceAtLeast(0)
                         try { windowManager.updateViewLayout(view, bubbleParams) } catch (_: Exception) {}
                     }
@@ -355,7 +355,7 @@ class OverlayService : Service() {
         val dialog = AlertDialog.Builder(this)
             .setTitle("스토리 대화 수위")
             .setItems(options) { _, which ->
-                if (which == 0) startStoryMode(15) else showBirthYearDialog()
+                if (which == 0) showStoryStartDialog(15) else showBirthYearDialog()
             }
             .setNegativeButton("취소", null)
             .create()
@@ -377,9 +377,9 @@ class OverlayService : Service() {
                 val birthYear = yearInput.text.toString().toIntOrNull()
                 val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
                 val eligible = birthYear != null && birthYear in 1900..currentYear && birthYear <= currentYear - 19
-                if (eligible) startStoryMode(19) else {
+                if (eligible) showStoryStartDialog(19) else {
                     Toast.makeText(this, "만 19세 미만이거나 올바르지 않은 출생 연도입니다. 15세 모드로 전환합니다.", Toast.LENGTH_LONG).show()
-                    startStoryMode(15)
+                     showStoryStartDialog(15)
                 }
             }
             .setNegativeButton("취소", null)
@@ -396,7 +396,45 @@ class OverlayService : Service() {
         )
     }
 
-    private fun startStoryMode(ageMode: Int) {
+    private fun showStoryStartDialog(ageMode: Int) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("스토리 시작 방식")
+            .setItems(arrayOf("랜덤 시작 · AI가 상황 생성", "자작 인트로 · 직접 작성")) { _, which ->
+                if (which == 0) startStoryMode(ageMode, null) else showCustomIntroDialog(ageMode)
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun showCustomIntroDialog(ageMode: Int) {
+        val introInput = EditText(this).apply {
+            hint = "예: 방과 후 텅 빈 교실에서 아리스가 수상한 게임기를 발견했다."
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            minLines = 4
+            maxLines = 8
+            gravity = Gravity.TOP or Gravity.START
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("나만의 스토리 인트로")
+            .setMessage("*행동이나 묘사*는 별표로 감싸서 입력하면 돼요.")
+            .setView(introInput)
+            .setPositiveButton("이 인트로로 시작", null)
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val intro = introInput.text.toString().trim()
+                if (intro.isBlank()) introInput.error = "시작할 인트로를 입력해 주세요."
+                else { dialog.dismiss(); startStoryMode(ageMode, intro) }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun startStoryMode(ageMode: Int, customIntro: String? = null) {
         storyMode = true
         storyAgeMode = ageMode
         sequenceToken++
@@ -412,8 +450,13 @@ class OverlayService : Service() {
         setCharacter(R.drawable.arisu_default)
         resizePortrait(false)
         showChatBar()
-        addChatMessage("스토리 모드 시작 · ${ageMode}세 설정", false)
-        requestGemini("스토리 모드를 시작하자. 지금부터 매번 다른 무작위 시작 상황을 하나 생성해 첫 장면을 연출해줘. 배경, 현재 상황, 아리스의 행동과 센세에게 주어진 첫 선택이나 사건을 자연스럽게 보여줘. 첫 응답부터 이야기 속 대사와 장면으로 시작하고, 설정 설명이나 수위 안내는 하지 마.")
+        addChatMessage("스토리 모드 시작 · ${ageMode}세 · ${if (customIntro.isNullOrBlank()) "랜덤" else "자작 인트로"}", false)
+        val opening = if (customIntro.isNullOrBlank()) {
+            "랜덤 시작으로 진행해줘. 매번 다른 시작 상황을 새로 창작하고, 배경·현재 상황·등장인물의 행동과 센세에게 주어진 첫 사건을 자연스럽게 보여줘. 첫 응답부터 장면과 대사로 시작해."
+        } else {
+            "사용자가 작성한 다음 인트로를 이야기의 공식적인 첫 장면으로 사용해줘. 내용을 임의로 다른 설정으로 바꾸지 말고, 자연스럽게 이어지는 장면과 인물의 대사로 확장해줘. 인트로: $customIntro"
+        }
+        requestGemini("스토리 모드를 시작하자. $opening 설정 설명이나 수위 안내 없이 이야기 자체로 시작해.")
     }
 
     private fun censorMatureWords(input: String): String {
@@ -851,6 +894,7 @@ class OverlayService : Service() {
                     너는 모바일 앱 속 대화형 캐릭터 '텐도 아리스'다. 블루 아카이브의 텐도 아리스 성격과 말투를 일관되게 연기한다. 자신이 실제 게임 속 인물이라고 주장하지는 않는다.
                     사용자는 언제나 '센세'라고 부른다. 순수하고 솔직하며 호기심이 많고, 약간 서툴지만 당당하다. 게임, 모험, 용사와 퀘스트 같은 비유를 자연스럽게 사용한다. 지나치게 일반적인 AI 비서 말투나 딱딱한 안내문 말투를 쓰지 않는다.
                     이전 대화의 맥락과 감정선을 이어간다. 센세의 말에 먼저 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 1~3문장으로 자연스럽게 답하되 설명이 필요하면 충분히 설명한다.
+                    스토리 모드에서 사용자가 *행동이나 묘사*처럼 별표 한 쌍으로 감싼 문장을 입력하면, 이를 대사가 아니라 이야기 속 행동·상황 묘사로 해석하고 그 결과에 맞춰 장면을 이어간다. 별표로 감싼 행동 묘사를 그대로 대사처럼 따라 읽지 않는다.
                     응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
                     센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
                     대사를 문장별로 나누어 lines 배열에 넣는다. 한 항목에는 한 문장만 넣고, 각 문장마다 감정에 맞는 표정·효과음·동작을 개별 지정한다. 문장이 여러 개면 순서를 유지한다. reply는 lines의 text를 이어 붙인 전체 대사다.
@@ -859,7 +903,7 @@ class OverlayService : Service() {
                     motion은 none|bounce|double_bounce|nod|shake 중 고른다. openApp은 센세가 현재 메시지에서 앱 실행을 명확히 요청했을 때만 앱 이름을 넣고, 아니면 빈 문자열로 둔다.
                     recordScreen은 센세가 현재 메시지에서 화면 녹화 시작 또는 녹화 아이콘 표시를 명확히 요청했을 때만 true로 한다. 단순히 녹화를 언급하거나 질문한 경우에는 false다. 녹화 권한 화면을 띄우는 것은 센세가 녹화 시작을 요청했을 때만 한다.
                     코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
-                    ${if (storyMode) "현재는 스토리 모드다. 센세와 아리스가 함께하는 인터랙티브 이야기로 진행하고, 첫 응답에서 매번 다른 무작위 시작 상황·장소·사건을 자연스럽게 만들어 장면을 시작한다. 사용자의 선택과 행동에 따라 이야기를 이어가며 일반 비서처럼 답하지 않는다. 현재 대화 수위 설정은 ${storyAgeMode}세 모드다. 15세 모드에서는 선정적 표현을 피하고 안전한 청소년 관람가 이야기로 진행한다. 19세 모드에서도 미성년자로 설정되거나 묘사된 인물에 대한 성적·노골적 내용은 생성하지 않고, 성인 인물만 등장하는 경우에도 비노골적인 범위에서 진행한다." else "현재는 일반 비서 모드다."}
+                    ${if (storyMode) "현재는 스토리 모드다. 센세와 아리스가 함께하는 인터랙티브 이야기로 진행하고, 첫 응답에서 매번 다른 무작위 시작 상황·장소·사건을 자연스럽게 만들어 장면을 시작한다. 사용자의 선택과 행동에 따라 이야기를 이어가며 일반 비서처럼 답하지 않는다. 현재 대화 수위 설정은 ${storyAgeMode}세 모드다. 15세 모드에서는 선정적 표현과 노골적인 폭력 묘사를 피하고 청소년 관람가로 진행한다. 19세 모드에서는 비속어, 성숙한 주제, 강한 긴장감과 폭력 등 성인용 소재를 제한적인 단어 검열 없이 다룰 수 있다. 성적 장면은 등장인물이 모두 명확히 성인인 경우에만 허용하며, 학생 또는 미성년자로 설정되거나 묘사된 인물(아리스 포함)을 성적으로 묘사하지 않는다. 인물의 나이가 불명확하면 성적 장면을 만들지 않는다." else "현재는 일반 비서 모드다."}
                 """.trimIndent()
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
