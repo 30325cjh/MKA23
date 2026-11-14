@@ -64,6 +64,7 @@ class OverlayService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var dialogueVoicePlayer: MediaPlayer? = null
     private var bgmPlayer: MediaPlayer? = null
+    private var currentBgmAssetPath: String? = null
     private var bgmEnhancer: LoudnessEnhancer? = null
     private var pendingAttachmentUri: Uri? = null
     private var pendingAttachmentName: String? = null
@@ -491,10 +492,11 @@ class OverlayService : Service() {
     }
 
     private fun startBgm() {
-        if (bgmPlayer?.isPlaying == true) return
+        val bgmPath = if (activeCharacter == "kei") "kei/sounds/Kbgm.mp3" else "arisu/sounds/bgm.mp3"
+        if (bgmPlayer?.isPlaying == true && currentBgmAssetPath == bgmPath) return
         try {
             bgmPlayer?.release()
-            val bgmPath = if (activeCharacter == "kei") "kei/sounds/Kbgm.mp3" else "arisu/sounds/bgm.mp3"
+            currentBgmAssetPath = bgmPath
             bgmPlayer = createAssetMediaPlayer(bgmPath)?.apply {
                 isLooping = true
                 val volume = currentBgmVolume()
