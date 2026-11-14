@@ -1308,7 +1308,7 @@ class OverlayService : Service() {
                     }
                 }
                 val historyReply = if (requestHasCompanions || aiSummonsPartner) {
-                    lines.joinToString("\\n") { line ->
+                    lines.joinToString("\n") { line ->
                         val speaker = if (line.optString("speaker") == "kei") "케이" else "아리스"
                         "$speaker: ${line.optString("text")}"
                     }
@@ -1324,7 +1324,7 @@ class OverlayService : Service() {
                             if (line.optString("speaker").isBlank()) line.put("speaker", requestCharacter)
                         }
                     }
-                    val displayReply = if (companionsPresent) lines.joinToString("\\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
+                    val displayReply = if (companionsPresent) lines.joinToString("\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
                     startAssistantSequence(lines, displayReply, generatedFiles)
                     if (recordScreen) showRecordingBubble()
                     if (openApp.isNotBlank()) handler.postDelayed({ launchRequestedApp(openApp) }, 450L)
