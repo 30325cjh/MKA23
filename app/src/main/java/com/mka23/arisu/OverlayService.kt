@@ -236,7 +236,7 @@ class OverlayService : Service() {
                     if (name == "arisu") {
                         if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
                     } else {
-                        if (hasCompletedKeiInitialLogin()) startKeiAssistant() else playKeiLoginSequence()
+                        if (hasCompletedKeiInitialLogin()) playKeiWelcomeSequence() else playKeiLoginSequence()
                     }
                 }
             }
@@ -307,6 +307,31 @@ class OverlayService : Service() {
             dialogueStage = 1
             startTypewriter("로그인 완료.")
         }, 1750L)
+    }
+
+    private fun playKeiWelcomeSequence() {
+        sequenceToken++
+        showCharacterPanel()
+        resizePortrait(true)
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typing = false
+        waitingForTap = false
+        dialogueStage = 2
+        assistantDialogueActive = false
+        chatBar?.let { panel?.removeView(it) }
+        chatBar = null
+        chatInput = null
+        chatLog = null
+        chatScroll = null
+        conversation.clear()
+        stopDialogueVoice()
+        panelTitle?.text = "케이"
+        setCharacter("kei/images/default.png")
+        message?.visibility = View.VISIBLE
+        animateMotion("bounce")
+        playSound("kei/sounds/sigh.mp3")
+        playDialogueVoice("kei/sounds/Kgreeting.mp3")
+        startTypewriter("하... 부르셨습니까, 센세.")
     }
 
     private fun startKeiAssistant() {
@@ -455,21 +480,6 @@ class OverlayService : Service() {
             setOnClickListener { showBgmVolumeDialog() }
         }
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
-        val modelButton = TextView(this).apply {
-            text = "AI"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            contentDescription = "Gemini 모델 전환"
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xFF315C9B.toInt())
-            }
-            elevation = dp(4).toFloat()
-            setOnClickListener { showModelDialog() }
-        }
-        val modelButtonParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.TOP)
-        header.addView(modelButton, modelButtonParams)
         root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
@@ -950,9 +960,7 @@ class OverlayService : Service() {
 
     private fun modelPreferences() = getSharedPreferences("arisu_model_settings", Context.MODE_PRIVATE)
 
-    private fun getSelectedModel(): String =
-        modelPreferences().getString("selected_model", "gemini-3.8-flash")?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: "gemini-3.8-flash"
+    private fun getSelectedModel(): String = "gemini-3.5-flash-lite"
 
     private fun showModelDialog() {
         val models = arrayOf("gemini-3.8-flash", "gemini-3.5-flash-lite")
