@@ -235,7 +235,9 @@ class OverlayService : Service() {
                     dialog.dismiss()
                     if (name == "arisu") {
                         if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
-                    } else startKeiAssistant()
+                    } else {
+                        if (hasCompletedKeiInitialLogin()) startKeiAssistant() else playKeiLoginSequence()
+                    }
                 }
             }
             choice.addView(ImageView(this).apply {
@@ -255,6 +257,56 @@ class OverlayService : Service() {
         addChoice("kei", "텐도 케이", "kei/images/default.png")
         setOverlayDialog(dialog)
         dialog.show()
+    }
+
+    private fun keiLaunchPreferences() = getSharedPreferences("kei_launch_settings", Context.MODE_PRIVATE)
+
+    private fun hasCompletedKeiInitialLogin(): Boolean =
+        keiLaunchPreferences().getBoolean("initial_login_completed", false)
+
+    private fun markKeiInitialLoginCompleted() {
+        keiLaunchPreferences().edit().putBoolean("initial_login_completed", true).apply()
+    }
+
+    private fun playKeiLoginSequence() {
+        sequenceToken++
+        val token = sequenceToken
+        showCharacterPanel()
+        resizePortrait(true)
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typing = false
+        waitingForTap = false
+        dialogueStage = 0
+        assistantDialogueActive = false
+        chatBar?.let { panel?.removeView(it) }
+        chatBar = null
+        chatInput = null
+        chatLog = null
+        chatScroll = null
+        conversation.clear()
+        stopDialogueVoice()
+
+        panelTitle?.text = "케이"
+        setCharacter("kei/images/default.png")
+        message?.visibility = View.VISIBLE
+        message?.text = "케이 연결중○○○"
+        playSound("kei/sounds/unknow.mp3")
+        playDialogueVoice("kei/sounds/Klogin_loading.mp3")
+
+        val progress = arrayOf("케이 연결중●○○", "케이 연결중●●○", "케이 연결중●●●")
+        progress.forEachIndexed { index, text ->
+            handler.postDelayed({
+                if (token == sequenceToken && panel != null) message?.text = text
+            }, 500L * (index + 1))
+        }
+        handler.postDelayed({
+            if (token != sequenceToken || panel == null) return@postDelayed
+            setCharacter("kei/images/default.png")
+            playSound("kei/sounds/success.mp3")
+            playDialogueVoice("kei/sounds/Klogin_success.mp3")
+            dialogueStage = 1
+            startTypewriter("로그인 완료.")
+        }, 1750L)
     }
 
     private fun startKeiAssistant() {
@@ -575,6 +627,33 @@ class OverlayService : Service() {
         }
         if (!waitingForTap) return
         waitingForTap = false
+        if (activeCharacter == "kei") {
+            when (dialogueStage) {
+                1 -> {
+                    stopDialogueVoice()
+                    setCharacter("kei/images/default.png")
+                    animateMotion("bounce")
+                    playSound("kei/sounds/sigh.mp3")
+                    playDialogueVoice("kei/sounds/Kgreeting.mp3")
+                    dialogueStage = 2
+                    startTypewriter("하... 부르셨습니까, 센세.")
+                }
+                2 -> {
+                    stopDialogueVoice()
+                    setCharacter("kei/images/default.png")
+                    playSound("kei/sounds/wtf.mp3")
+                    playDialogueVoice("kei/sounds/Kcommand.mp3")
+                    dialogueStage = 3
+                    startTypewriter("또 뭘 시키시려는 겁니까?")
+                }
+                3 -> {
+                    stopDialogueVoice()
+                    markKeiInitialLoginCompleted()
+                    showChatBar()
+                }
+            }
+            return
+        }
         when (dialogueStage) {
             1 -> {
                 stopDialogueVoice()
