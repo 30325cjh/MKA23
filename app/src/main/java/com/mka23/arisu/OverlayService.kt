@@ -164,7 +164,44 @@ class OverlayService : Service() {
         }
         icon.setOnClickListener { playLoginSequence() }
         bubble = icon
-        windowManager.addView(icon, windowParams(dp(70), dp(70), Gravity.TOP or Gravity.START))
+        val bubbleParams = windowParams(dp(70), dp(70), Gravity.TOP or Gravity.START)
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        var dragging = false
+        val longPressDrag = Runnable { dragging = true }
+        icon.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    startX = bubbleParams.x
+                    startY = bubbleParams.y
+                    dragging = false
+                    handler.removeCallbacks(longPressDrag)
+                    handler.postDelayed(longPressDrag, 350L)
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (dragging) {
+                        bubbleParams.x = (startX + downRawX - event.rawX).toInt().coerceAtLeast(0)
+                        bubbleParams.y = (startY + event.rawY - downRawY).toInt().coerceAtLeast(0)
+                        try { windowManager.updateViewLayout(view, bubbleParams) } catch (_: Exception) {}
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPressDrag)
+                    if (!dragging && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                        view.performClick()
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+        windowManager.addView(icon, bubbleParams)
     }
 
     private fun playLoginSequence() {
