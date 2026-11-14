@@ -723,18 +723,20 @@ class OverlayService : Service() {
             .apply()
     }
 
-    private fun getTtsApiKey(): String? = try {
-        val prefs = ttsPreferences()
-        val iv = prefs.getString("tts_api_iv", null) ?: return null
-        val value = prefs.getString("tts_api_value", null) ?: return null
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            getOrCreateSecretKey(),
-            GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP))
-        )
-        String(cipher.doFinal(Base64.decode(value, Base64.NO_WRAP)), Charsets.UTF_8).trim()
-    } catch (_: Exception) { null }
+    private fun getTtsApiKey(): String? {
+        return try {
+            val prefs = ttsPreferences()
+            val iv = prefs.getString("tts_api_iv", null) ?: return null
+            val value = prefs.getString("tts_api_value", null) ?: return null
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                getOrCreateSecretKey(),
+                GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP))
+            )
+            String(cipher.doFinal(Base64.decode(value, Base64.NO_WRAP)), Charsets.UTF_8).trim()
+        } catch (_: Exception) { null }
+    }
 
     private fun getTtsVoiceId(): String =
         ttsPreferences().getString("voice_id", "")?.trim().orEmpty()
@@ -865,9 +867,10 @@ class OverlayService : Service() {
                     }.orEmpty()
                     throw IllegalStateException("ElevenLabs 오류 ($status): ${error.take(500)}")
                 }
-                audioFile = java.io.File.createTempFile("arisu_tts_", ".mp3", cacheDir)
+                val generatedAudio = java.io.File.createTempFile("arisu_tts_", ".mp3", cacheDir)
+                audioFile = generatedAudio
                 connection.inputStream.use { input ->
-                    audioFile.outputStream().use { output -> input.copyTo(output) }
+                    generatedAudio.outputStream().use { output -> input.copyTo(output) }
                 }
                 handler.post {
                     if (token != ttsToken || !isAutoTtsEnabled()) {
