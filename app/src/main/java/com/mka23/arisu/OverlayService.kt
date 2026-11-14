@@ -1214,10 +1214,10 @@ class OverlayService : Service() {
                     [센세가 특정 캐릭터를 직접 지목함 — 응답 순서 최우선]
                     이번 메시지에서 센세가 직접 말을 건 대상은 ${if (preferredSpeaker == "kei") "텐도 케이" else "텐도 아리스"}다. 반드시 ${if (preferredSpeaker == "kei") "케이" else "아리스"}가 첫 번째 대사를 말하며, 그 캐릭터가 센세의 질문이나 요청에 먼저 직접 답한다. 그 다음 다른 캐릭터가 자연스럽게 끼어들거나 반응한다. 첫 대사의 speaker는 "$preferredSpeaker"로 고정한다. 기본 선택 캐릭터가 누구인지는 응답 순서에 영향을 주지 않는다.
                 """.trimIndent() else ""
-                val autonomousPrompt = if (requestHasCompanions && userText.startsWith("센세가 이번에는 말을 걸지 않고")) """
+                val autonomousPrompt = if (userText.startsWith("센세가 이번에는 말을 걸지 않고")) """
                     
                     [자율 대화 진행]
-                    센세가 빈 전송을 눌러 두 사람에게 자율 대화를 맡겼다. 두 사람이 서로에게 먼저 말을 걸고 자연스럽게 대화를 시작한다. 첫 대사는 현재 선택된 캐릭터가 아니라 두 사람 중 맥락상 먼저 말할 캐릭터가 한다. 센세에게 직접 답변을 요구하지 말고, 두 사람 사이의 대화를 한 차례 충분히 이어간다. lines에는 두 사람의 대사를 각각 speaker와 함께 넣는다.
+                    센세가 빈 전송을 눌러 자율적으로 한 차례 진행하라고 했다. 현재 두 캐릭터가 함께 있다면 아리스와 케이가 서로에게 먼저 말을 걸고 자연스럽게 대화를 시작하며, 두 사람 사이의 대화를 한 차례 충분히 이어간다. 이때 각 대사의 speaker를 "arisu" 또는 "kei"로 정확히 지정한다. 현재 혼자 있다면 현재 캐릭터가 직전 대화와 상황을 바탕으로 먼저 화제를 꺼내거나 생각을 말하며 자연스럽게 대화를 한 차례 진행한다. 센세에게 억지로 질문하거나 답변을 요구하지 않는다.
                 """.trimIndent() else ""
                 val systemPrompt = baseSystemPrompt + speakerPriorityPrompt + autonomousPrompt + if (requestHasCompanions) """
 
