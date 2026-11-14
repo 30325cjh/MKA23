@@ -6,7 +6,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Base64
 import android.widget.*
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -41,6 +49,35 @@ class MainActivity : Activity() {
             setPadding(0, 8, 0, 16)
         }
         root.addView(status)
+        root.addView(TextView(this).apply {
+            text = "Gemini API 키"
+            textSize = 15f
+            setTextColor(0xFF17496A.toInt())
+            setPadding(0, 8, 0, 6)
+        })
+        val apiKeyInput = EditText(this).apply {
+            hint = "Google AI Studio에서 발급한 API 키"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        root.addView(apiKeyInput, LinearLayout.LayoutParams(-1, -2))
+        root.addView(Button(this).apply {
+            text = "API 키 저장"
+            setOnClickListener {
+                val key = apiKeyInput.text.toString().trim()
+                if (key.length < 20) {
+                    apiKeyInput.error = "올바른 Gemini API 키를 입력해주세요."
+                } else {
+                    try {
+                        saveApiKey(key)
+                        apiKeyInput.text?.clear()
+                        Toast.makeText(this@MainActivity, "Gemini API 키를 안전하게 저장했어요.", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "API 키 저장 실패: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        })
         root.addView(Button(this).apply {
             text = "화면 위에 표시 권한 허용"
             setOnClickListener {
@@ -67,6 +104,36 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
+
+
+    private fun apiPreferences() = getSharedPreferences("arisu_secure_settings", MODE_PRIVATE)
+
+    private fun getOrCreateSecretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val alias = "arisu_gemini_api_key"
+        if (keyStore.containsAlias(alias)) return keyStore.getKey(alias, null) as SecretKey
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                alias,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun saveApiKey(value: String) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        val encrypted = cipher.doFinal(value.trim().toByteArray(Charsets.UTF_8))
+        apiPreferences().edit()
+            .putString("api_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString("api_value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .apply()
+    }
 
     private var pendingSaveName: String = "arisu_file.txt"
     private var pendingSaveMime: String = "text/plain"
