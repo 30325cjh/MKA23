@@ -1410,6 +1410,8 @@ class OverlayService : Service() {
             val speaker = line.optString("speaker", assistantBaseCharacter).let { if (it == "kei") "kei" else "arisu" }
             activeCharacter = speaker
             character = if (speaker == assistantBaseCharacter) primaryCharacterView else partnerCharacter
+            // 헤더 이름은 고정된 기본 창이 아니라 현재 대사를 말하는 캐릭터를 표시한다.
+            panelTitle?.text = if (speaker == "kei") "텐도 케이" else "텐도 아리스"
         }
         applyArisuAction(
             line.optString("expression", "default"),
@@ -1424,6 +1426,7 @@ class OverlayService : Service() {
         if (companionsPresent) {
             activeCharacter = assistantBaseCharacter
             character = primaryCharacterView
+            panelTitle?.text = if (assistantBaseCharacter == "kei") "텐도 케이" else "텐도 아리스"
         }
         waitingForTap = false
         typing = false
