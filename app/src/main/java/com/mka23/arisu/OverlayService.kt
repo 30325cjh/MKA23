@@ -46,6 +46,7 @@ class OverlayService : Service() {
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var bubble: ImageView? = null
     private var pendingBubbleClick: Runnable? = null
+    private var panelClosing = false
     private var panel: LinearLayout? = null
     private var character: ImageView? = null
     private var primaryCharacterView: ImageView? = null
@@ -506,9 +507,28 @@ class OverlayService : Service() {
         startTypewriter("반갑습니다, 센세!")
     }
 
+    private fun setBubbleVisible(visible: Boolean) {
+        val view = bubble ?: return
+        view.animate().cancel()
+        if (visible) {
+            if (view.visibility != View.VISIBLE) {
+                view.alpha = 0f
+                view.scaleX = 0.82f
+                view.scaleY = 0.82f
+                view.visibility = View.VISIBLE
+            }
+            view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(190L).start()
+        } else if (view.visibility == View.VISIBLE) {
+            view.animate().alpha(0f).scaleX(0.82f).scaleY(0.82f).setDuration(150L)
+                .withEndAction { view.visibility = View.GONE }
+                .start()
+        }
+    }
+
     private fun showCharacterPanel() {
-        // 캐릭터 창이 열려 있는 동안 플로팅 아이콘은 숨긴다.
-        bubble?.visibility = View.GONE
+        // 캐릭터 창이 열려 있는 동안 플로팅 아이콘은 부드럽게 숨긴다.
+        panelClosing = false
+        setBubbleVisible(false)
         if (panel != null) {
             panel?.visibility = View.VISIBLE
             return
@@ -593,7 +613,10 @@ class OverlayService : Service() {
             y = dp(18)
             flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         }
+        root.alpha = 0f
+        root.translationY = dp(18).toFloat()
         windowManager.addView(root, params)
+        root.animate().alpha(1f).translationY(0f).setDuration(220L).start()
         startBgm()
     }
 
@@ -843,13 +866,6 @@ class OverlayService : Service() {
         chatLogs.forEach { (key, _) ->
             chatScrolls[key]?.visibility = if (key == normalized && !assistantDialogueActive) View.VISIBLE else View.GONE
         }
-        chatTabButtons.forEach { (key, button) ->
-            button.background = rounded(
-                if (key == normalized) 0xFF315C9B.toInt() else 0xFF292929.toInt(),
-                dp(10).toFloat()
-            )
-            button.alpha = if (key == normalized) 1f else 0.72f
-        }
         chatLog = chatLogs[normalized]
         chatScroll = chatScrolls[normalized]
     }
@@ -874,33 +890,10 @@ class OverlayService : Service() {
         resizePortrait(false)
         message?.visibility = View.GONE
         if (chatBar != null) {
-            chatTabBar?.visibility = View.VISIBLE
             chatBar?.visibility = View.VISIBLE
             selectChatMode(currentChatMode())
             return
         }
-
-        val tabs = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        listOf("arisu" to "아리스", "kei" to "케이", "both" to "공존").forEach { (mode, label) ->
-            val tab = TextView(this).apply {
-                text = label
-                textSize = 13f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                setOnClickListener { selectChatMode(mode) }
-            }
-            tabs.addView(tab, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                marginEnd = dp(4)
-            })
-            chatTabButtons[mode] = tab
-        }
-        chatTabBar = tabs
-        root.addView(tabs, LinearLayout.LayoutParams(-1, dp(42)))
 
         listOf("arisu", "kei", "both").forEach { mode ->
             val messages = LinearLayout(this).apply {
@@ -1856,32 +1849,44 @@ class OverlayService : Service() {
     }
 
     private fun closePanel() {
-        // 캐릭터 창을 닫으면 플로팅 아이콘을 다시 표시한다.
-        bubble?.visibility = View.VISIBLE
+        if (panelClosing) return
+        val closingPanel = panel
+        if (closingPanel == null) {
+            setBubbleVisible(true)
+            return
+        }
+        panelClosing = true
         sequenceToken++
         companionsPresent = false
         stopDialogueVoice()
         typingRunnable?.let { handler.removeCallbacks(it) }
         typingRunnable = null
-        panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
-        panel = null
-        bgmPlayer?.pause()
-        character = null
-        primaryCharacterView = null
-        partnerCharacter = null
-        message = null
-        chatBar = null
-        chatInput = null
-        chatLog = null
-        chatScroll = null
-        chatTabBar = null
-        chatTabButtons.clear()
-        chatLogs.clear()
-        chatScrolls.clear()
-        typing = false
-        waitingForTap = false
-        assistantDialogueActive = false
-        portraitStage = null
+        closingPanel.animate().cancel()
+        closingPanel.animate().alpha(0f).translationY(dp(18).toFloat()).setDuration(180L)
+            .withEndAction {
+                try { windowManager.removeView(closingPanel) } catch (_: Exception) {}
+                if (panel === closingPanel) panel = null
+                bgmPlayer?.pause()
+                character = null
+                primaryCharacterView = null
+                partnerCharacter = null
+                message = null
+                chatBar = null
+                chatInput = null
+                chatLog = null
+                chatScroll = null
+                chatTabBar = null
+                chatTabButtons.clear()
+                chatLogs.clear()
+                chatScrolls.clear()
+                typing = false
+                waitingForTap = false
+                assistantDialogueActive = false
+                portraitStage = null
+                panelClosing = false
+                setBubbleVisible(true)
+            }
+            .start()
     }
 
     private fun enableCompanionMode() {
