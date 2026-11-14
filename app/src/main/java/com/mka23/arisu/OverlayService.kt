@@ -80,6 +80,9 @@ class OverlayService : Service() {
     private var recordBubble: TextView? = null
     private var recordMenu: FrameLayout? = null
     private var recordingPaused = false
+    private var storyMode = false
+    private var storyAgeMode = 15
+    private var headerTitle: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -267,7 +270,7 @@ class OverlayService : Service() {
 
         val header = FrameLayout(this)
         val title = TextView(this).apply {
-            text = "아리스"
+            text = if (storyMode) "아리스 · 스토리" else "아리스"
             textSize = 23f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -276,6 +279,7 @@ class OverlayService : Service() {
                 true
             }
         }
+        headerTitle = title
         header.addView(title, FrameLayout.LayoutParams(-1, dp(44), Gravity.CENTER))
         val bgmButton = TextView(this).apply {
             text = "♫"
@@ -306,6 +310,22 @@ class OverlayService : Service() {
         }
         val modelButtonParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.TOP)
         header.addView(modelButton, modelButtonParams)
+        val storyButton = TextView(this).apply {
+            text = "S"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "스토리 모드 및 대화 수위 설정"
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF315C9B.toInt())
+            }
+            elevation = dp(4).toFloat()
+            setOnClickListener { showStoryModeDialog() }
+        }
+        header.addView(storyButton, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.TOP).apply {
+            rightMargin = dp(46)
+        })
         root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
@@ -328,6 +348,85 @@ class OverlayService : Service() {
         }
         windowManager.addView(root, params)
         startBgm()
+    }
+
+    private fun showStoryModeDialog() {
+        val options = arrayOf("15세 모드 · 청소년 관람가", "19세 모드 · 성인용 대화")
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("스토리 대화 수위")
+            .setItems(options) { _, which ->
+                if (which == 0) startStoryMode(15) else showBirthYearDialog()
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun showBirthYearDialog() {
+        val yearInput = EditText(this).apply {
+            hint = "태어난 연도 (예: 2000)"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("19세 모드 연령 확인")
+            .setMessage("출생 연도를 입력해 주세요. 만 19세 이상인 경우에만 19세 모드를 사용할 수 있어요.")
+            .setView(yearInput)
+            .setPositiveButton("확인") { _, _ ->
+                val birthYear = yearInput.text.toString().toIntOrNull()
+                val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+                val eligible = birthYear != null && birthYear in 1900..currentYear && birthYear <= currentYear - 19
+                if (eligible) startStoryMode(19) else {
+                    Toast.makeText(this, "만 19세 미만이거나 올바르지 않은 출생 연도입니다. 15세 모드로 전환합니다.", Toast.LENGTH_LONG).show()
+                    startStoryMode(15)
+                }
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun setOverlayDialog(dialog: AlertDialog) {
+        @Suppress("DEPRECATION")
+        dialog.window?.setType(
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else WindowManager.LayoutParams.TYPE_PHONE
+        )
+    }
+
+    private fun startStoryMode(ageMode: Int) {
+        storyMode = true
+        storyAgeMode = ageMode
+        sequenceToken++
+        typingRunnable?.let { handler.removeCallbacks(it) }
+        typingRunnable = null
+        typing = false
+        waitingForTap = false
+        assistantDialogueActive = false
+        conversation.clear()
+        closePanel()
+        showCharacterPanel()
+        headerTitle?.text = "아리스 · 스토리 (${ageMode}세)"
+        setCharacter(R.drawable.arisu_default)
+        resizePortrait(false)
+        showChatBar()
+        addChatMessage("스토리 모드 시작 · ${ageMode}세 설정", false)
+        requestGemini("스토리 모드를 시작하자. 지금부터 매번 다른 무작위 시작 상황을 하나 생성해 첫 장면을 연출해줘. 배경, 현재 상황, 아리스의 행동과 센세에게 주어진 첫 선택이나 사건을 자연스럽게 보여줘. 첫 응답부터 이야기 속 대사와 장면으로 시작하고, 설정 설명이나 수위 안내는 하지 마.")
+    }
+
+    private fun censorMatureWords(input: String): String {
+        val terms = listOf(
+            "성관계", "성교", "섹스", "자위", "오르가즘", "사정", "발정", "유두", "음부",
+            "성기", "질내", "항문성교", "강간", "유사성행위", "야동", "포르노",
+            "fuck", "fucking", "blowjob", "handjob", "porn", "penis", "vagina", "orgasm"
+        )
+        var result = input
+        terms.sortedByDescending { it.length }.forEach { term ->
+            result = result.replace(Regex(Regex.escape(term), RegexOption.IGNORE_CASE), "**")
+        }
+        return result
     }
 
     private fun bgmPreferences() = getSharedPreferences("arisu_bgm_settings", Context.MODE_PRIVATE)
@@ -547,7 +646,8 @@ class OverlayService : Service() {
 
     private fun submitChatMessage() {
         val input = chatInput ?: return
-        val typedText = input.text.toString().trim()
+        val rawTypedText = input.text.toString().trim()
+        val typedText = if (storyAgeMode == 15) censorMatureWords(rawTypedText) else rawTypedText
         val attachment = pendingAttachmentUri
         val attachmentName = pendingAttachmentName
         val text = typedText.ifEmpty {
@@ -759,6 +859,7 @@ class OverlayService : Service() {
                     motion은 none|bounce|double_bounce|nod|shake 중 고른다. openApp은 센세가 현재 메시지에서 앱 실행을 명확히 요청했을 때만 앱 이름을 넣고, 아니면 빈 문자열로 둔다.
                     recordScreen은 센세가 현재 메시지에서 화면 녹화 시작 또는 녹화 아이콘 표시를 명확히 요청했을 때만 true로 한다. 단순히 녹화를 언급하거나 질문한 경우에는 false다. 녹화 권한 화면을 띄우는 것은 센세가 녹화 시작을 요청했을 때만 한다.
                     코드를 실행하거나 파일에 접근할 수 있다고 말하지 않는다.
+                    ${if (storyMode) "현재는 스토리 모드다. 센세와 아리스가 함께하는 인터랙티브 이야기로 진행하고, 첫 응답에서 매번 다른 무작위 시작 상황·장소·사건을 자연스럽게 만들어 장면을 시작한다. 사용자의 선택과 행동에 따라 이야기를 이어가며 일반 비서처럼 답하지 않는다. 현재 대화 수위 설정은 ${storyAgeMode}세 모드다. 15세 모드에서는 선정적 표현을 피하고 안전한 청소년 관람가 이야기로 진행한다. 19세 모드에서도 미성년자로 설정되거나 묘사된 인물에 대한 성적·노골적 내용은 생성하지 않고, 성인 인물만 등장하는 경우에도 비노골적인 범위에서 진행한다." else "현재는 일반 비서 모드다."}
                 """.trimIndent()
                 val body = JSONObject()
                     .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
@@ -802,7 +903,8 @@ class OverlayService : Service() {
                 val rawText = rawTextBuilder.toString().trim()
                 if (rawText.isEmpty()) throw IllegalStateException("Gemini 응답 텍스트가 비어 있습니다.")
                 val action = JSONObject(rawText)
-                val reply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
+                val rawReply = action.optString("reply", "센세, 응답을 받았지만 대사를 읽지 못했습니다.")
+                val reply = if (storyAgeMode == 15) censorMatureWords(rawReply) else rawReply
                 val generatedFiles = mutableListOf<JSONObject>()
                 val filesArray = action.optJSONArray("files")
                 if (filesArray != null) {
@@ -825,7 +927,10 @@ class OverlayService : Service() {
                 if (linesArray != null) {
                     for (i in 0 until linesArray.length()) {
                         val item = linesArray.optJSONObject(i) ?: continue
-                        if (item.optString("text").isNotBlank()) lines.add(item)
+                        if (item.optString("text").isNotBlank()) {
+                            if (storyAgeMode == 15) item.put("text", censorMatureWords(item.optString("text")))
+                            lines.add(item)
+                        }
                     }
                 }
                 if (lines.isEmpty()) {
@@ -1233,6 +1338,7 @@ class OverlayService : Service() {
         typingRunnable = null
         panel?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         panel = null
+        headerTitle = null
         bgmPlayer?.pause()
         character = null
         message = null
