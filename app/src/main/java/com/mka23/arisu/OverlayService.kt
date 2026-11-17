@@ -627,6 +627,28 @@ class OverlayService : Service() {
             elevation = dp(3).toFloat()
             setOnClickListener { showBgmVolumeDialog() }
         }
+        val attachButton = TextView(this).apply {
+            text = if (pendingAttachmentUri == null) "＋" else "📎"
+            textSize = 19f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "이미지 또는 HTML 파일 첨부"
+            background = rounded(0xFF315C9B.toInt(), dp(11).toFloat())
+            elevation = dp(3).toFloat()
+            setOnClickListener {
+                panel?.visibility = View.GONE
+                bubble?.visibility = View.GONE
+                val picker = Intent(this@OverlayService, MainActivity::class.java).apply {
+                    action = "com.mka23.arisu.PICK_ATTACHMENT"
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(picker)
+            }
+        }
+        attachmentButton = attachButton
+        header.addView(attachButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP).apply {
+            topMargin = dp(40)
+        })
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
         val adultLanguageButton = TextView(this).apply {
             text = if (adultLanguageModeEnabled()) "19+" else "일반"
@@ -663,7 +685,7 @@ class OverlayService : Service() {
             setOnClickListener { showCharacterControlDialog() }
         }
         header.addView(characterControlButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.END or Gravity.TOP))
-        root.addView(header, LinearLayout.LayoutParams(-1, dp(44)))
+        root.addView(header, LinearLayout.LayoutParams(-1, dp(78)))
         message = TextView(this).apply {
             text = "아리스 연결중○○○"
             textSize = 18f
@@ -828,7 +850,7 @@ class OverlayService : Service() {
         if (typing) {
             typingRunnable?.let { handler.removeCallbacks(it) }
             typingRunnable = null
-            message?.text = currentLine
+            message?.text = renderActionMarkup(currentLine)
             typing = false
             waitingForTap = true
             if (assistantDialogueActive) scheduleAssistantAutoAdvance()
@@ -916,9 +938,10 @@ class OverlayService : Service() {
                 if (token != sequenceToken || panel == null) return
                 if (charIndex < currentLine.length) {
                     charIndex++
-                    message?.text = currentLine.substring(0, charIndex)
+                    message?.text = renderActionMarkup(currentLine.substring(0, charIndex))
                     handler.postDelayed(this, 38L)
                 } else {
+                    message?.text = renderActionMarkup(currentLine)
                     typing = false
                     waitingForTap = true
                     typingRunnable = null
@@ -1006,25 +1029,6 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(8), 0, 0)
         }
-        val attachButton = TextView(this).apply {
-            text = if (pendingAttachmentUri == null) "＋" else "📎"
-            textSize = 23f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            contentDescription = "이미지 또는 HTML 파일 첨부"
-            background = rounded(0xFF315C9B.toInt(), dp(12).toFloat())
-            setOnClickListener {
-                panel?.visibility = View.GONE
-                bubble?.visibility = View.GONE
-                val picker = Intent(this@OverlayService, MainActivity::class.java).apply {
-                    action = "com.mka23.arisu.PICK_ATTACHMENT"
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(picker)
-            }
-        }
-        attachmentButton = attachButton
-        bar.addView(attachButton, LinearLayout.LayoutParams(dp(46), dp(48)).apply { rightMargin = dp(6) })
         val replayButton = TextView(this).apply {
             text = "↻"
             textSize = 24f
@@ -1173,20 +1177,26 @@ class OverlayService : Service() {
         ensureApiKey {
             val shownText = if (attachment != null) "$text\n📎 ${attachmentName ?: "첨부 파일"}" else text
             if (!autonomousTurn) addChatMessage(shownText, true)
-            requestGemini(text, 0, attachment, attachmentName, addressedPartner)
+            requestGemini(buildHanakoStyleInput(text), 0, attachment, attachmentName, addressedPartner)
         }
     }
 
-    private fun renderBoldMarkdown(source: String): CharSequence {
+    private fun renderActionMarkup(source: String): CharSequence {
         val output = SpannableStringBuilder()
-        val pattern = Regex("\\*\\*(.+?)\\*\\*", setOf(RegexOption.DOT_MATCHES_ALL))
+        val pattern = Regex("(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)")
         var cursor = 0
         pattern.findAll(source).forEach { match ->
             output.append(source.substring(cursor, match.range.first))
             val start = output.length
             output.append(match.groupValues[1])
             output.setSpan(
-                StyleSpan(Typeface.BOLD),
+                android.text.style.ForegroundColorSpan(0xFFAAAAAA.toInt()),
+                start,
+                output.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            output.setSpan(
+                StyleSpan(Typeface.ITALIC),
                 start,
                 output.length,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -1197,12 +1207,39 @@ class OverlayService : Service() {
         return output
     }
 
+    private fun buildHanakoStyleInput(raw: String): String {
+        val lines = raw.lineSequence().toList()
+        val hasDirectives = lines.any {
+            it.trimStart().startsWith("@:") ||
+                it.trimStart().startsWith("@하나코:") ||
+                it.trimStart().startsWith("@아리스:") ||
+                it.trimStart().startsWith("@케이:")
+        }
+        if (!hasDirectives) return raw
+        val activeName = if (activeCharacter == "kei") "케이" else "아리스"
+        val script = lines.mapIndexed { index, line ->
+            val value = line.trim()
+            when {
+                value.startsWith("@:") -> "${index + 1}. 센세의 직접 대사/행동: ${value.removePrefix("@:").trim()}"
+                value.startsWith("@하나코:") -> "${index + 1}. ${activeName}의 대사/행동 지시: ${value.removePrefix("@하나코:").trim()}"
+                value.startsWith("@아리스:") -> "${index + 1}. 아리스의 대사/행동 지시: ${value.removePrefix("@아리스:").trim()}"
+                value.startsWith("@케이:") -> "${index + 1}. 케이의 대사/행동 지시: ${value.removePrefix("@케이:").trim()}"
+                else -> "${index + 1}. 센세의 직접 대사/행동: $value"
+            }
+        }.joinToString("\n")
+        return """
+            [센세가 지정한 순서형 대본 — 반드시 순서 유지]
+            아래 항목을 위에서부터 순서대로 진행한다. '센세의 직접 대사/행동'은 센세가 한 말이나 행동으로 취급하고, 해당 내용에 캐릭터가 자연스럽게 반응한다. '대사/행동 지시'는 지정된 캐릭터가 실제로 말하거나 행동하도록 하되, 단순 복사하지 말고 캐릭터의 말투와 감정에 맞게 자연스럽게 살을 붙여 표현한다. 각 항목의 순서를 바꾸거나 생략하지 않는다. 행동 묘사는 *행동 묘사* 형식을 사용한다.
+            $script
+        """.trimIndent()
+    }
+
     private fun addChatMessage(text: String, fromUser: Boolean): View {
         val mode = currentChatMode()
         if (mode != selectedChatMode) selectChatMode(mode)
         val messages = chatLogs[mode] ?: chatLog ?: return TextView(this)
         val bubble = TextView(this).apply {
-            this.text = renderBoldMarkdown(text)
+            this.text = renderActionMarkup(text)
             textSize = 16f
             setTextColor(Color.WHITE)
             setPadding(dp(12), dp(8), dp(12), dp(8))
