@@ -1817,40 +1817,51 @@ class OverlayService : Service() {
     }
 
     private fun resizePortrait(expanded: Boolean) {
-        val density = resources.displayMetrics.density
-        val availableHeightDp = (resources.displayMetrics.heightPixels / density).toInt()
+        val availableHeightDp = (resources.displayMetrics.heightPixels / resources.displayMetrics.density).toInt()
         val expandedImageDp = (availableHeightDp - 170).coerceIn(300, 500)
-        val imageRatio = when {
-            fullscreenMode && expanded -> 0.67f
-            fullscreenMode -> 0.48f
-            expanded -> 0.82f
-            else -> 250f / availableHeightDp.coerceAtLeast(1)
+
+        // 창 모드는 전체 화면 기능 추가 전의 원래 레이아웃과 크기를 그대로 유지한다.
+        if (!fullscreenMode) {
+            val imageHeight = dp(if (expanded) expandedImageDp else 250)
+            val stageHeight = dp(if (expanded) expandedImageDp + 10 else 260)
+            character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                height = imageHeight
+            }
+            if (companionsPresent) {
+                primaryCharacterView?.layoutParams = (primaryCharacterView?.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                    height = imageHeight
+                }
+                partnerCharacter?.layoutParams = (partnerCharacter?.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                    height = imageHeight
+                }
+            }
+            portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply {
+                height = stageHeight
+            }
+            panel?.requestLayout()
+            try {
+                val params = panel?.layoutParams as? WindowManager.LayoutParams
+                if (params != null && panel?.isAttachedToWindow == true) windowManager.updateViewLayout(panel, params)
+            } catch (_: Exception) {}
+            return
         }
-        val stageRatio = when {
-            fullscreenMode && expanded -> 0.72f
-            fullscreenMode -> 0.54f
-            expanded -> (expandedImageDp + 10).toFloat() / availableHeightDp.coerceAtLeast(1)
-            else -> 260f / availableHeightDp.coerceAtLeast(1)
-        }
+
+        // 전체 화면에서만 대사 출력 중 캐릭터를 확대하고 중앙에 배치한다.
+        val imageRatio = if (expanded) 0.67f else 0.48f
+        val stageRatio = if (expanded) 0.72f else 0.54f
         val imageHeight = dp((availableHeightDp * imageRatio).toInt().coerceAtLeast(250))
         val stageHeight = dp((availableHeightDp * stageRatio).toInt().coerceAtLeast(260))
         if (companionsPresent) {
             val stageWidth = portraitStage?.width?.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val halfWidth = (stageWidth / 2).coerceAtLeast(1)
-            val primaryGravity = if (fullscreenMode) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.BOTTOM or Gravity.START
-            val partnerGravity = if (fullscreenMode) Gravity.CENTER_VERTICAL or Gravity.END else Gravity.BOTTOM or Gravity.END
-            primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, primaryGravity)
-            partnerCharacter?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, partnerGravity)
+            primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, Gravity.CENTER_VERTICAL or Gravity.START)
+            partnerCharacter?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, Gravity.CENTER_VERTICAL or Gravity.END)
         } else {
-            character?.layoutParams = FrameLayout.LayoutParams(
-                -1,
-                imageHeight,
-                if (fullscreenMode) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            )
+            character?.layoutParams = FrameLayout.LayoutParams(-1, imageHeight, Gravity.CENTER)
         }
         portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply {
             height = stageHeight
-            topMargin = if (fullscreenMode && expanded) dp((availableHeightDp * 0.08f).toInt()) else 0
+            topMargin = if (expanded) dp((availableHeightDp * 0.08f).toInt()) else 0
         }
         panel?.requestLayout()
         panelContainer?.requestLayout()
