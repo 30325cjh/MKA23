@@ -1181,13 +1181,18 @@ class OverlayService : Service() {
             if (attachment != null) "첨부한 파일을 확인해줘."
             else "센세가 이번에는 말을 걸지 않고 너희에게 자율적으로 대화를 진행해 보라고 했습니다. 현재 상황과 직전 대화의 맥락을 바탕으로 아리스와 케이가 자연스럽게 서로 대화를 시작하고 이어가세요. 센세에게 억지로 질문하거나 답변을 요구하지 말고, 두 사람이 주고받는 대화 한 차례를 보여주세요."
         }
-        val addressedPartner = if (companionsPresent) {
-            when {
-                activeCharacter == "kei" && text.contains("아리스") -> "arisu"
-                activeCharacter == "arisu" && text.contains("케이") -> "kei"
-                else -> null
-            }
-        } else null
+        val scriptSpeakers = explicitScriptSpeakers(text)
+        if (scriptSpeakers.any { it != activeCharacter } || scriptSpeakers.size > 1) {
+            enableCompanionMode()
+        }
+        val addressedPartner = scriptSpeakers.firstOrNull()
+            ?: if (companionsPresent) {
+                when {
+                    activeCharacter == "kei" && text.contains("아리스") -> "arisu"
+                    activeCharacter == "arisu" && text.contains("케이") -> "kei"
+                    else -> null
+                }
+            } else null
         val summonIntent = listOf(
             "데려와", "데려와줘", "데려와 줘", "데려와달라", "데려와 주세요", "데리고 와",
             "불러와", "불러 와", "불러줘", "불러 줘", "불러달라", "불러 주세요",
@@ -1235,35 +1240,65 @@ class OverlayService : Service() {
         return output
     }
 
+    private fun explicitScriptSpeakers(raw: String): List<String> {
+        val found = linkedSetOf<String>()
+        raw.lineSequence().forEach { rawLine ->
+            val line = rawLine.trim()
+            when {
+                line.startsWith("@아리스:") -> found.add("arisu")
+                line.startsWith("@케이:") -> found.add("kei")
+            }
+        }
+        return found.toList()
+    }
+
     private fun buildHanakoStyleInput(raw: String): String {
         val lines = raw.lineSequence().toList()
-        val hasDirectives = lines.any {
-            it.trimStart().startsWith("@:") ||
-                it.trimStart().startsWith("@하나코:") ||
-                it.trimStart().startsWith("@아리스:") ||
-                it.trimStart().startsWith("@케이:")
-        }
+        val directivePattern = Regex("^@\\s*(하나코|아리스|케이)?\\s*:\\s*(.*)$")
+        val hasDirectives = lines.any { directivePattern.matches(it.trim()) }
         if (!hasDirectives) return raw
         val activeName = if (activeCharacter == "kei") "케이" else "아리스"
-        val script = lines.flatMapIndexed { index, line ->
-            val value = line.trim()
+        var sequenceNumber = 0
+        val script = lines.flatMap { rawLine ->
+            val value = rawLine.trim()
+            if (value.isEmpty()) return@flatMap emptyList()
             val repeatMatch = Regex("[×xX]([1-9][0-9]?)$").find(value)
             val repeatCount = (repeatMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1).coerceAtMost(20)
-            val directive = if (repeatMatch != null) value.substring(0, repeatMatch.range.first).trim() else value
-            val description = when {
-                directive.startsWith("@:") -> "센세의 직접 대사/행동: ${directive.removePrefix("@:").trim()}"
-                directive.startsWith("@하나코:") -> "${activeName}의 대사/행동 지시: ${directive.removePrefix("@하나코:").trim()}"
-                directive.startsWith("@아리스:") -> "아리스의 대사/행동 지시: ${directive.removePrefix("@아리스:").trim()}"
-                directive.startsWith("@케이:") -> "케이의 대사/행동 지시: ${directive.removePrefix("@케이:").trim()}"
-                else -> "센세의 직접 대사/행동: $directive"
+            val withoutRepeat = if (repeatMatch != null) value.substring(0, repeatMatch.range.first).trim() else value
+            val match = directivePattern.matchEntire(withoutRepeat)
+            val tag = match?.groupValues?.getOrNull(1)
+            val payload = match?.groupValues?.getOrNull(2)?.trim().orEmpty()
+            val kind: String
+            val speaker: String
+            val content: String
+            when (tag) {
+                "아리스" -> { kind = "캐릭터 행동/대사 지시"; speaker = "아리스"; content = payload }
+                "케이" -> { kind = "캐릭터 행동/대사 지시"; speaker = "케이"; content = payload }
+                "하나코" -> { kind = "캐릭터 행동/대사 지시"; speaker = activeName; content = payload }
+                null -> {
+                    if (match != null) {
+                        kind = "센세의 직접 대사/행동"; speaker = "센세"; content = payload
+                    } else {
+                        kind = "센세의 직접 대사/행동"; speaker = "센세"; content = withoutRepeat
+                    }
+                }
+                else -> { kind = "센세의 직접 대사/행동"; speaker = "센세"; content = withoutRepeat }
             }
             (1..repeatCount).map { repetition ->
-                "${index + 1}.${if (repeatCount > 1) " (반복 $repetition/$repeatCount)" else ""} $description"
+                sequenceNumber++
+                val repeatLabel = if (repeatCount > 1) " (반복 $repetition/$repeatCount)" else ""
+                "$sequenceNumber.$repeatLabel [$kind / $speaker] $content"
             }
-        }.joinToString("\n")
+        }.joinToString("\\n")
         return """
-            [센세가 지정한 순서형 대본 — 반드시 순서 유지]
-            아래 항목을 위에서부터 순서대로 진행한다. '센세의 직접 대사/행동'은 센세가 한 말이나 행동으로 취급하고, 해당 내용에 캐릭터가 자연스럽게 반응한다. '대사/행동 지시'는 지정된 캐릭터가 실제로 말하거나 행동하도록 하되, 단순 복사하지 말고 캐릭터의 말투와 감정에 맞게 자연스럽게 살을 붙여 표현한다. 각 항목의 순서를 바꾸거나 생략하지 않는다. 행동 묘사는 *행동 묘사* 형식을 사용한다. 항목 끝에 ×N 또는 xN이 있으면 해당 대사/행동을 N회 반복하며, 각 반복을 순서대로 별도 출력한다.
+            [하나코식 @ 대본 실행 — 최우선 규칙]
+            아래 대본을 위에서 아래 순서로 정확하게 실행한다. 항목을 합치거나 생략하거나 순서를 바꾸지 않는다.
+            [센세의 직접 대사/행동]은 센세가 실제로 말하거나 행동한 것으로 취급한다. 센세의 말을 캐릭터 대사로 대신 출력하지 말고, 해당 행동 직후 캐릭터가 자연스럽게 반응한다.
+            [캐릭터 행동/대사 지시]는 해당 캐릭터가 직접 말하거나 행동하게 한다. 지시문을 그대로 복사하지 말고 캐릭터 고유의 말투와 감정에 맞게 자연스럽게 확장한다. 행동은 반드시 *행동 묘사*로 표현한다.
+            @하나코는 현재 선택된 캐릭터($activeName)를 뜻한다. @아리스와 @케이는 지정된 캐릭터를 뜻한다. 지정된 캐릭터가 둘 이상이면 각 lines 항목에 speaker를 "arisu" 또는 "kei"로 정확히 표시한다. 한 명만 등장하는 경우에도 해당 캐릭터의 관점과 말투를 유지한다.
+            ×N 또는 xN은 해당 항목을 N회 반복해 각각 별도 lines 항목으로 출력한다. 반복 횟수는 최대 20회다. 대본에 없는 장면이나 행동을 임의로 추가하지 않는다.
+            반드시 JSON 응답의 lines 배열에 대본의 실행 순서가 그대로 드러나도록 문장별로 나눠 넣는다.
+            [실행할 대본]
             $script
         """.trimIndent()
     }
