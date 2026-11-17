@@ -1289,7 +1289,7 @@ class OverlayService : Service() {
                 val repeatLabel = if (repeatCount > 1) " (반복 $repetition/$repeatCount)" else ""
                 "$sequenceNumber.$repeatLabel [$kind / $speaker] $content"
             }
-        }.joinToString("\\n")
+        }.joinToString("\n")
         return """
             [하나코식 @ 대본 실행 — 최우선 규칙]
             아래 대본을 위에서 아래 순서로 정확하게 실행한다. 항목을 합치거나 생략하거나 순서를 바꾸지 않는다.
@@ -1817,16 +1817,41 @@ class OverlayService : Service() {
     }
 
     private fun resizePortrait(expanded: Boolean) {
-        val availableHeightDp = (resources.displayMetrics.heightPixels / resources.displayMetrics.density).toInt()
+        val density = resources.displayMetrics.density
+        val availableHeightDp = (resources.displayMetrics.heightPixels / density).toInt()
         val expandedImageDp = (availableHeightDp - 170).coerceIn(300, 500)
-        val imageHeight = dp(if (fullscreenMode) (availableHeightDp * 0.40f).toInt().coerceAtLeast(260) else if (expanded) expandedImageDp else 250)
-        val stageHeight = dp(if (fullscreenMode) (availableHeightDp * 0.42f).toInt().coerceAtLeast(280) else if (expanded) expandedImageDp + 10 else 260)
-        character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
-        if (companionsPresent) {
-            primaryCharacterView?.layoutParams = (primaryCharacterView?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
-            partnerCharacter?.layoutParams = (partnerCharacter?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
+        val imageRatio = when {
+            fullscreenMode && expanded -> 0.67f
+            fullscreenMode -> 0.48f
+            expanded -> 0.82f
+            else -> 250f / availableHeightDp.coerceAtLeast(1)
         }
-        portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply { height = stageHeight }
+        val stageRatio = when {
+            fullscreenMode && expanded -> 0.72f
+            fullscreenMode -> 0.54f
+            expanded -> (expandedImageDp + 10).toFloat() / availableHeightDp.coerceAtLeast(1)
+            else -> 260f / availableHeightDp.coerceAtLeast(1)
+        }
+        val imageHeight = dp((availableHeightDp * imageRatio).toInt().coerceAtLeast(250))
+        val stageHeight = dp((availableHeightDp * stageRatio).toInt().coerceAtLeast(260))
+        if (companionsPresent) {
+            val stageWidth = portraitStage?.width?.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+            val halfWidth = (stageWidth / 2).coerceAtLeast(1)
+            val primaryGravity = if (fullscreenMode) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.BOTTOM or Gravity.START
+            val partnerGravity = if (fullscreenMode) Gravity.CENTER_VERTICAL or Gravity.END else Gravity.BOTTOM or Gravity.END
+            primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, primaryGravity)
+            partnerCharacter?.layoutParams = FrameLayout.LayoutParams(halfWidth, imageHeight, partnerGravity)
+        } else {
+            character?.layoutParams = FrameLayout.LayoutParams(
+                -1,
+                imageHeight,
+                if (fullscreenMode) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            )
+        }
+        portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply {
+            height = stageHeight
+            topMargin = if (fullscreenMode && expanded) dp((availableHeightDp * 0.08f).toInt()) else 0
+        }
         panel?.requestLayout()
         panelContainer?.requestLayout()
         try {
@@ -2236,6 +2261,7 @@ class OverlayService : Service() {
             partner.layoutParams = FrameLayout.LayoutParams(half, dp(250), Gravity.BOTTOM or Gravity.END)
             primaryCharacterView?.requestLayout()
             partner.requestLayout()
+            if (fullscreenMode) resizePortrait(assistantDialogueActive)
         }
         startBgm()
     }
