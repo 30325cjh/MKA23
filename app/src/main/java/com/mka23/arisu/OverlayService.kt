@@ -17,6 +17,10 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.graphics.Typeface
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -1173,12 +1177,32 @@ class OverlayService : Service() {
         }
     }
 
+    private fun renderBoldMarkdown(source: String): CharSequence {
+        val output = SpannableStringBuilder()
+        val pattern = Regex("\\*\\*(.+?)\\*\\*", setOf(RegexOption.DOT_MATCHES_ALL))
+        var cursor = 0
+        pattern.findAll(source).forEach { match ->
+            output.append(source.substring(cursor, match.range.first))
+            val start = output.length
+            output.append(match.groupValues[1])
+            output.setSpan(
+                StyleSpan(Typeface.BOLD),
+                start,
+                output.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            cursor = match.range.last + 1
+        }
+        output.append(source.substring(cursor))
+        return output
+    }
+
     private fun addChatMessage(text: String, fromUser: Boolean): View {
         val mode = currentChatMode()
         if (mode != selectedChatMode) selectChatMode(mode)
         val messages = chatLogs[mode] ?: chatLog ?: return TextView(this)
         val bubble = TextView(this).apply {
-            this.text = text
+            this.text = renderBoldMarkdown(text)
             textSize = 16f
             setTextColor(Color.WHITE)
             setPadding(dp(12), dp(8), dp(12), dp(8))
