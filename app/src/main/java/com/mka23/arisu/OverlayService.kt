@@ -52,6 +52,11 @@ class OverlayService : Service() {
     private var pendingBubbleClick: Runnable? = null
     private var panelClosing = false
     private var panel: LinearLayout? = null
+    private var panelContainer: FrameLayout? = null
+    private var fullscreenButton: TextView? = null
+    private var fullscreenMode = false
+    private var currentSessionSaved = false
+    private val visibleChatMessages = mutableListOf<JSONObject>()
     private var character: ImageView? = null
     private var primaryCharacterView: ImageView? = null
     private var partnerCharacter: ImageView? = null
@@ -261,7 +266,8 @@ class OverlayService : Service() {
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
                     startBgm()
                     dialog.dismiss()
-                    if (name == "arisu") {
+                    if (hasPersistedSession()) restoreLastSession()
+                    else if (name == "arisu") {
                         if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
                     } else {
                         if (hasCompletedKeiInitialLogin()) playKeiWelcomeSequence() else playKeiLoginSequence()
@@ -604,6 +610,22 @@ class OverlayService : Service() {
         portraitStage = stage
         stage.addView(portrait, FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         root.addView(stage, LinearLayout.LayoutParams(-1, dp(260)))
+        stage.addView(TextView(this).apply {
+            text = "☰"; textSize = 23f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            contentDescription = "채팅 관리"; background = rounded(0xCC315C9B.toInt(), dp(11).toFloat())
+            elevation = dp(6).toFloat(); setOnClickListener { showChatManagementDialog() }
+        }, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(6); topMargin = dp(6)
+        })
+        val fullscreenControl = TextView(this).apply {
+            text = "□"; textSize = 24f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            contentDescription = "전체 화면 전환"; background = rounded(0xCC315C9B.toInt(), dp(11).toFloat())
+            elevation = dp(6).toFloat(); setOnClickListener { toggleFullscreenMode() }
+        }
+        fullscreenButton = fullscreenControl
+        stage.addView(fullscreenControl, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+            rightMargin = dp(6); topMargin = dp(6)
+        })
 
         val header = FrameLayout(this)
         val title = TextView(this).apply {
@@ -701,14 +723,20 @@ class OverlayService : Service() {
         })
         panel = root
         val panelWidth = minOf(dp(660), resources.displayMetrics.widthPixels - dp(28))
+        val container = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            addView(root, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        }
+        panelContainer = container
         val params = windowParams(panelWidth, WindowManager.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
             y = dp(18)
             flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         }
         root.alpha = 0f
         root.translationY = dp(18).toFloat()
-        windowManager.addView(root, params)
+        windowManager.addView(container, params)
         root.animate().alpha(1f).translationY(0f).setDuration(220L).start()
+        if (fullscreenMode) applyFullscreenLayout()
         startBgm()
     }
 
@@ -983,6 +1011,7 @@ class OverlayService : Service() {
     }
 
     private fun clearChatUi() {
+        visibleChatMessages.clear()
         chatTabBar?.let { panel?.removeView(it) }
         chatScrolls.values.forEach { view -> panel?.removeView(view) }
         chatBar?.let { panel?.removeView(it) }
@@ -1020,7 +1049,8 @@ class OverlayService : Service() {
             }
             chatLogs[mode] = messages
             chatScrolls[mode] = history
-            root.addView(history, LinearLayout.LayoutParams(-1, dp(90)))
+            root.addView(history, LinearLayout.LayoutParams(-1,
+                if (fullscreenMode) 0 else dp(90), if (fullscreenMode) 1f else 0f))
         }
         selectChatMode(currentChatMode())
 
@@ -1176,7 +1206,7 @@ class OverlayService : Service() {
         attachmentButton?.text = "＋"
         ensureApiKey {
             val shownText = if (attachment != null) "$text\n📎 ${attachmentName ?: "첨부 파일"}" else text
-            if (!autonomousTurn) addChatMessage(shownText, true)
+            if (!autonomousTurn) { currentSessionSaved = false; addChatMessage(shownText, true) }
             requestGemini(buildHanakoStyleInput(text), 0, attachment, attachmentName, addressedPartner)
         }
     }
@@ -1240,7 +1270,7 @@ class OverlayService : Service() {
         """.trimIndent()
     }
 
-    private fun addChatMessage(text: String, fromUser: Boolean): View {
+    private fun addChatMessage(text: String, fromUser: Boolean, persist: Boolean = true): View {
         val mode = currentChatMode()
         if (mode != selectedChatMode) selectChatMode(mode)
         val messages = chatLogs[mode] ?: chatLog ?: return TextView(this)
@@ -1262,6 +1292,10 @@ class OverlayService : Service() {
             ))
         }
         messages.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
+        if (persist) {
+            visibleChatMessages.add(JSONObject().put("mode", mode).put("text", text).put("user", fromUser))
+            saveCurrentSession()
+        }
         chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
         return row
     }
@@ -1314,8 +1348,8 @@ class OverlayService : Service() {
         val requestCharacter = activeCharacter
         val requestHasCompanions = companionsPresent
         val firstSpeaker = preferredSpeaker ?: requestCharacter
-        val loading = addChatMessage(if (firstSpeaker == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false)
-        val partnerLoading = if (requestHasCompanions) addChatMessage(if (firstSpeaker == "kei") "아리스가 생각 중..." else "케이가 생각 중...", false) else null
+        val loading = addChatMessage(if (firstSpeaker == "kei") "케이가 생각 중..." else "아리스가 생각 중...", false, false)
+        val partnerLoading = if (requestHasCompanions) addChatMessage(if (firstSpeaker == "kei") "아리스가 생각 중..." else "케이가 생각 중...", false, false) else null
         val key = getApiKey()?.trim()
         if (key.isNullOrBlank()) {
             (loading.parent as? LinearLayout)?.removeView(loading)
@@ -1551,6 +1585,7 @@ class OverlayService : Service() {
                 } else reply
                 conversation.add("model" to historyReply)
                 while (conversation.size > 16) conversation.removeAt(0)
+                saveCurrentSession()
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
                     (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
