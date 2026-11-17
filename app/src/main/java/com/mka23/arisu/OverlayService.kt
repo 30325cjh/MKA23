@@ -1012,6 +1012,8 @@ class OverlayService : Service() {
 
     private fun clearChatUi() {
         visibleChatMessages.clear()
+        sessionPreferences().edit().remove("last_session").apply()
+        currentSessionSaved = false
         chatTabBar?.let { panel?.removeView(it) }
         chatScrolls.values.forEach { view -> panel?.removeView(view) }
         chatBar?.let { panel?.removeView(it) }
@@ -1344,6 +1346,7 @@ class OverlayService : Service() {
         if (retryCount == 0) {
             conversation.add("user" to userText)
             while (conversation.size > 16) conversation.removeAt(0)
+            saveCurrentSession()
         }
         val requestCharacter = activeCharacter
         val requestHasCompanions = companionsPresent
@@ -1783,8 +1786,8 @@ class OverlayService : Service() {
     private fun resizePortrait(expanded: Boolean) {
         val availableHeightDp = (resources.displayMetrics.heightPixels / resources.displayMetrics.density).toInt()
         val expandedImageDp = (availableHeightDp - 170).coerceIn(300, 500)
-        val imageHeight = dp(if (expanded) expandedImageDp else 250)
-        val stageHeight = dp(if (expanded) expandedImageDp + 10 else 260)
+        val imageHeight = dp(if (fullscreenMode) (availableHeightDp * 0.40f).toInt().coerceAtLeast(260) else if (expanded) expandedImageDp else 250)
+        val stageHeight = dp(if (fullscreenMode) (availableHeightDp * 0.42f).toInt().coerceAtLeast(280) else if (expanded) expandedImageDp + 10 else 260)
         character?.layoutParams = (character?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
         if (companionsPresent) {
             primaryCharacterView?.layoutParams = (primaryCharacterView?.layoutParams as? FrameLayout.LayoutParams)?.apply { height = imageHeight }
@@ -1792,9 +1795,10 @@ class OverlayService : Service() {
         }
         portraitStage?.layoutParams = (portraitStage?.layoutParams as? LinearLayout.LayoutParams)?.apply { height = stageHeight }
         panel?.requestLayout()
+        panelContainer?.requestLayout()
         try {
-            val params = panel?.layoutParams as? WindowManager.LayoutParams
-            if (params != null && panel?.isAttachedToWindow == true) windowManager.updateViewLayout(panel, params)
+            val params = panelContainer?.layoutParams as? WindowManager.LayoutParams
+            if (params != null && panelContainer?.isAttachedToWindow == true) windowManager.updateViewLayout(panelContainer, params)
         } catch (_: Exception) {}
     }
 
@@ -2132,6 +2136,7 @@ class OverlayService : Service() {
 
     private fun closePanel() {
         if (panelClosing) return
+        saveCurrentSession()
         val closingPanel = panel
         if (closingPanel == null) {
             setBubbleVisible(true)
@@ -2146,8 +2151,12 @@ class OverlayService : Service() {
         closingPanel.animate().cancel()
         closingPanel.animate().alpha(0f).translationY(dp(18).toFloat()).setDuration(180L)
             .withEndAction {
-                try { windowManager.removeView(closingPanel) } catch (_: Exception) {}
+                val closingContainer = panelContainer
+                try { windowManager.removeView(closingContainer ?: closingPanel) } catch (_: Exception) {}
                 if (panel === closingPanel) panel = null
+                panelContainer = null
+                fullscreenButton = null
+                fullscreenMode = false
                 bgmPlayer?.pause()
                 character = null
                 primaryCharacterView = null
@@ -2198,6 +2207,232 @@ class OverlayService : Service() {
         startBgm()
     }
 
+    private fun sessionPreferences() = getSharedPreferences("arisu_chat_sessions", Context.MODE_PRIVATE)
+
+    private fun hasPersistedSession(): Boolean =
+        !sessionPreferences().getString("last_session", null).isNullOrBlank()
+
+    private fun saveCurrentSession() {
+        if (conversation.isEmpty() && visibleChatMessages.isEmpty()) return
+        val history = JSONArray()
+        conversation.forEach { (role, value) ->
+            history.put(JSONObject().put("role", role).put("text", value))
+        }
+        val messages = JSONArray()
+        visibleChatMessages.forEach { messages.put(it) }
+        val snapshot = JSONObject()
+            .put("activeCharacter", activeCharacter)
+            .put("companionsPresent", companionsPresent)
+            .put("selectedChatMode", selectedChatMode)
+            .put("conversation", history)
+            .put("messages", messages)
+        sessionPreferences().edit().putString("last_session", snapshot.toString()).apply()
+    }
+
+    private fun restoreLastSession() {
+        val raw = sessionPreferences().getString("last_session", null) ?: return
+        try {
+            val snapshot = JSONObject(raw)
+            activeCharacter = snapshot.optString("activeCharacter", activeCharacter)
+            assistantBaseCharacter = activeCharacter
+            companionsPresent = false
+            conversation.clear()
+            val history = snapshot.optJSONArray("conversation") ?: JSONArray()
+            for (i in 0 until history.length()) {
+                val item = history.optJSONObject(i) ?: continue
+                conversation.add(item.optString("role") to item.optString("text"))
+            }
+            showCharacterPanel()
+            setCharacter(if (activeCharacter == "kei") "kei/images/default.png" else "arisu/images/arisu_default.jpg")
+            showChatBar()
+            if (snapshot.optBoolean("companionsPresent", false)) enableCompanionMode()
+            visibleChatMessages.clear()
+            val messages = snapshot.optJSONArray("messages") ?: JSONArray()
+            for (i in 0 until messages.length()) {
+                val item = messages.optJSONObject(i) ?: continue
+                val mode = item.optString("mode", currentChatMode())
+                selectChatMode(mode)
+                addChatMessage(item.optString("text"), item.optBoolean("user"), false)
+                visibleChatMessages.add(JSONObject(item.toString()))
+            }
+            selectChatMode(snapshot.optString("selectedChatMode", currentChatMode()))
+            currentSessionSaved = false
+            saveCurrentSession()
+            startBgm()
+            Toast.makeText(this, "이전 채팅을 이어서 불러왔어요.", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "이전 채팅을 불러오지 못했어요: " + (e.message ?: "오류"), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showChatManagementDialog() {
+        val options = arrayOf("저장하기", "저장한 대화 불러오기", "처음부터 하기")
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("채팅 관리")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> promptSaveChat()
+                    1 -> showSavedChats()
+                    2 -> confirmStartOver()
+                }
+            }
+            .setNegativeButton("닫기", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun promptSaveChat() {
+        val nameInput = EditText(this).apply {
+            hint = "저장할 대화 이름"
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("채팅 저장")
+            .setView(nameInput)
+            .setPositiveButton("저장", null)
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = nameInput.text.toString().trim()
+                if (name.isEmpty()) {
+                    nameInput.error = "이름을 입력해 주세요."
+                    return@setOnClickListener
+                }
+                saveNamedChat(name)
+                dialog.dismiss()
+            }
+        }
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun saveNamedChat(name: String) {
+        saveCurrentSession()
+        val prefs = sessionPreferences()
+        val list = try { JSONArray(prefs.getString("saved_chats", "[]") ?: "[]") } catch (_: Exception) { JSONArray() }
+        val snapshot = try { JSONObject(prefs.getString("last_session", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        val entry = JSONObject().put("name", name).put("savedAt", System.currentTimeMillis()).put("snapshot", snapshot)
+        var replaced = false
+        for (i in 0 until list.length()) {
+            if (list.optJSONObject(i)?.optString("name") == name) {
+                list.put(i, entry)
+                replaced = true
+                break
+            }
+        }
+        if (!replaced) list.put(entry)
+        prefs.edit().putString("saved_chats", list.toString()).apply()
+        currentSessionSaved = true
+        Toast.makeText(this, "'" + name + "' 대화를 앱에 저장했어요.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showSavedChats() {
+        val prefs = sessionPreferences()
+        val list = try { JSONArray(prefs.getString("saved_chats", "[]") ?: "[]") } catch (_: Exception) { JSONArray() }
+        if (list.length() == 0) {
+            Toast.makeText(this, "저장된 대화가 아직 없어요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = Array(list.length()) { i -> list.optJSONObject(i)?.optString("name", "이름 없는 대화") ?: "이름 없는 대화" }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("저장한 대화")
+            .setItems(names) { _, which ->
+                val entry = list.optJSONObject(which) ?: return@setItems
+                val load = {
+                    sessionPreferences().edit().putString("last_session", entry.optJSONObject("snapshot")?.toString() ?: "{}").apply()
+                    restoreLastSession()
+                    currentSessionSaved = true
+                }
+                if (!currentSessionSaved && (conversation.isNotEmpty() || visibleChatMessages.isNotEmpty())) {
+                    val warning = AlertDialog.Builder(this)
+                        .setTitle("현재 채팅이 사라집니다")
+                        .setMessage("현재 채팅을 저장하지 않았습니다. 이 대화를 불러오면 현재 진행 중인 채팅이 사라집니다. 불러올까요?")
+                        .setPositiveButton("예") { _, _ -> load() }
+                        .setNegativeButton("아니오", null)
+                        .create()
+                    setOverlayDialog(warning)
+                    warning.show()
+                } else load()
+            }
+            .setNegativeButton("닫기", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun confirmStartOver() {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("처음부터 시작")
+            .setMessage("현재 채팅 내역을 삭제하고 처음부터 시작할까요?")
+            .setPositiveButton("초기화") { _, _ ->
+                sequenceToken++
+                typingRunnable?.let { handler.removeCallbacks(it) }
+                assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+                typingRunnable = null
+                assistantAutoAdvanceRunnable = null
+                typing = false
+                waitingForTap = false
+                assistantDialogueActive = false
+                conversation.clear()
+                visibleChatMessages.clear()
+                clearChatUi()
+                sessionPreferences().edit().remove("last_session").apply()
+                currentSessionSaved = false
+                showChatBar()
+                resizePortrait(false)
+                Toast.makeText(this, "채팅 내역을 초기화했어요.", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun toggleFullscreenMode() {
+        fullscreenMode = !fullscreenMode
+        fullscreenButton?.text = if (fullscreenMode) "○" else "□"
+        fullscreenButton?.contentDescription = if (fullscreenMode) "창 모드로 전환" else "전체 화면 전환"
+        if (fullscreenMode) applyFullscreenLayout() else applyWindowedLayout()
+    }
+
+    private fun applyFullscreenLayout() {
+        val container = panelContainer ?: return
+        val root = panel ?: return
+        val metrics = resources.displayMetrics
+        val portraitWidth = minOf(metrics.widthPixels, (metrics.heightPixels * 9f / 16f).toInt())
+        container.setBackgroundColor(0xE6000000.toInt())
+        root.background = rounded(Color.BLACK, 0f)
+        root.layoutParams = FrameLayout.LayoutParams(portraitWidth, -1, Gravity.CENTER)
+        val params = container.layoutParams as? WindowManager.LayoutParams ?: return
+        params.width = -1
+        params.height = -1
+        params.gravity = Gravity.CENTER
+        params.x = 0
+        params.y = 0
+        params.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        try { windowManager.updateViewLayout(container, params) } catch (_: Exception) {}
+        resizePortrait(false)
+    }
+
+    private fun applyWindowedLayout() {
+        val container = panelContainer ?: return
+        val root = panel ?: return
+        val panelWidth = minOf(dp(660), resources.displayMetrics.widthPixels - dp(28))
+        container.setBackgroundColor(Color.TRANSPARENT)
+        root.background = rounded(Color.BLACK, dp(22).toFloat())
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.CENTER)
+        val params = container.layoutParams as? WindowManager.LayoutParams ?: return
+        params.width = panelWidth
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
+        params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        params.y = dp(18)
+        params.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        try { windowManager.updateViewLayout(container, params) } catch (_: Exception) {}
+        resizePortrait(false)
+    }
+
     private fun rounded(color: Int, radius: Float) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = radius
@@ -2210,6 +2445,7 @@ class OverlayService : Service() {
             try { unregisterReceiver(it) } catch (_: Exception) {}
         }
         homeCloseReceiver = null
+        saveCurrentSession()
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) { } }
         removeRecordingBubble()
         closePanel()
