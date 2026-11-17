@@ -258,19 +258,43 @@ class OverlayService : Service() {
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
-                    activeCharacter = name
+                    // 전환 직전 대화를 현재 캐릭터 전용 세션에 보존한다.
+                    saveCurrentSession()
+                    sequenceToken++
+                    typingRunnable?.let { handler.removeCallbacks(it) }
+                    assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+                    typingRunnable = null
+                    assistantAutoAdvanceRunnable = null
+                    stopDialogueVoice()
+                    typing = false
+                    waitingForTap = false
+                    assistantDialogueActive = false
+
+                    try { portraitStage?.removeView(partnerCharacter) } catch (_: Exception) {}
+                    partnerCharacter = null
                     companionsPresent = false
-                    selectChatMode(name)
-                    partnerCharacter?.visibility = View.GONE
+                    activeCharacter = name
+                    assistantBaseCharacter = name
+                    character = primaryCharacterView
                     primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
                     getSharedPreferences("assistant_character", Context.MODE_PRIVATE).edit().putString("active", name).apply()
-                    startBgm()
                     dialog.dismiss()
-                    if (hasPersistedSession()) restoreLastSession()
-                    else if (name == "arisu") {
-                        if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
+
+                    if (hasPersistedSession(name)) {
+                        restoreLastSession(name)
                     } else {
-                        if (hasCompletedKeiInitialLogin()) playKeiWelcomeSequence() else playKeiLoginSequence()
+                        conversation.clear()
+                        currentSessionSaved = false
+                        panelTitle?.text = if (name == "arisu") "아리스" else "케이"
+                        chatInput?.hint = if (name == "arisu") "아리스에게 메시지 입력..." else "케이에게 메시지 입력..."
+                        selectChatMode(name)
+                        setCharacter(if (name == "arisu") "arisu/images/arisu_default.jpg" else "kei/images/default.png")
+                        startBgm()
+                        if (name == "arisu") {
+                            if (hasCompletedInitialLogin()) playWelcomeSequence() else playLoginSequence()
+                        } else {
+                            if (hasCompletedKeiInitialLogin()) playKeiWelcomeSequence() else playKeiLoginSequence()
+                        }
                     }
                 }
             }
@@ -1471,7 +1495,10 @@ class OverlayService : Service() {
                     아리스는 케이를 소중한 동료로 여기며 함께한 일과 추억을 기억한다. 케이 역시 아리스를 가장 특별하게 여기고 과보호할 정도로 아낀다. 다만 현재 기본 대화 인격은 아리스이므로 케이의 1인칭 대사나 말투를 무단으로 섞지 않는다. 케이에 관해 물으면 아리스의 관점에서 케이의 독립성과 성격을 존중해 이야기한다.
                     
                     [대화 방식]
-                    사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 3~5문장으로 자연스럽게 답하되 설명이 필요한 경우 충분히 설명한다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
+                    사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 기존보다 전체 출력량을 약 2배로 늘려 행동 묘사와 실제 대사를 모두 충분히 작성한다. 일반적인 대화도 보통 6~10개의 짧은 행동/대사 단위로 구성하되, 단순한 확인 질문에는 불필요하게 장황해지지 않는다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
+
+                    [캐릭터의 자발적인 행동 묘사 — 항상 적용]
+                    캐릭터는 센세의 요청이 없어도 자기 자신의 표정, 시선, 몸짓, 자세, 움직임을 자연스럽게 직접 묘사한다. 모든 행동 묘사는 반드시 *행동 묘사* 형식으로 감싼다. 예: *살짝 미소 지으며 고개를 끄덕인다*, *잠시 생각하듯 시선을 위로 향한다*. 행동 묘사는 캐릭터의 말과 번갈아 배치하고, 답변마다 상황에 맞는 행동 묘사를 여러 번 포함한다. 행동만 나열하지 말고 실제 대사도 충분히 포함한다. lines 배열에는 행동 묘사와 대사를 각각 별도 항목으로, 원래 순서대로 넣는다. reply에도 같은 순서와 별표 표시를 유지하여 전체 행동 묘사와 대사를 모두 포함한다.
                     
                     응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
                     센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
@@ -1518,7 +1545,7 @@ class OverlayService : Service() {
                     .put("contents", contents)
                     .put("generationConfig", JSONObject()
                         .put("responseMimeType", "application/json")
-                        .put("maxOutputTokens", if (requestHasCompanions) 2560 else 1843))
+                        .put("maxOutputTokens", if (requestHasCompanions) 5120 else 3686))
                 val model = getSelectedModel()
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent"
                 connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
@@ -2279,8 +2306,19 @@ class OverlayService : Service() {
 
     private fun sessionPreferences() = getSharedPreferences("arisu_chat_sessions", Context.MODE_PRIVATE)
 
-    private fun hasPersistedSession(): Boolean =
-        !sessionPreferences().getString("last_session", null).isNullOrBlank()
+    private fun sessionKeyFor(name: String = activeCharacter, together: Boolean = companionsPresent): String =
+        if (together) "last_session_both" else "last_session_$name"
+
+    private fun hasPersistedSession(name: String = activeCharacter): Boolean {
+        val prefs = sessionPreferences()
+        val own = prefs.getString(sessionKeyFor(name, false), null)
+        if (!own.isNullOrBlank()) return true
+        val legacy = prefs.getString("last_session", null)
+        return try {
+            !legacy.isNullOrBlank() && JSONObject(legacy).optString("activeCharacter") == name &&
+                !JSONObject(legacy).optBoolean("companionsPresent", false)
+        } catch (_: Exception) { false }
+    }
 
     private fun saveCurrentSession() {
         if (conversation.isEmpty() && visibleChatMessages.isEmpty()) return
@@ -2289,18 +2327,30 @@ class OverlayService : Service() {
             history.put(JSONObject().put("role", role).put("text", value))
         }
         val messages = JSONArray()
-        visibleChatMessages.forEach { messages.put(it) }
+        visibleChatMessages.filter {
+            it.optString("mode") == currentChatMode()
+        }.forEach { messages.put(it) }
         val snapshot = JSONObject()
             .put("activeCharacter", activeCharacter)
             .put("companionsPresent", companionsPresent)
             .put("selectedChatMode", selectedChatMode)
             .put("conversation", history)
             .put("messages", messages)
-        sessionPreferences().edit().putString("last_session", snapshot.toString()).apply()
+        sessionPreferences().edit()
+            .putString("last_session", snapshot.toString())
+            .putString(sessionKeyFor(), snapshot.toString())
+            .apply()
     }
 
-    private fun restoreLastSession() {
-        val raw = sessionPreferences().getString("last_session", null) ?: return
+    private fun restoreLastSession(name: String? = null) {
+        val prefs = sessionPreferences()
+        val raw = if (name == null) prefs.getString("last_session", null)
+            else prefs.getString(sessionKeyFor(name, false), null)
+                ?: prefs.getString("last_session", null)?.takeIf {
+                    try { JSONObject(it).optString("activeCharacter") == name &&
+                        !JSONObject(it).optBoolean("companionsPresent", false) } catch (_: Exception) { false }
+                }
+        if (raw == null) return
         try {
             val snapshot = JSONObject(raw)
             activeCharacter = snapshot.optString("activeCharacter", activeCharacter)
