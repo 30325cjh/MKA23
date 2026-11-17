@@ -1217,19 +1217,25 @@ class OverlayService : Service() {
         }
         if (!hasDirectives) return raw
         val activeName = if (activeCharacter == "kei") "케이" else "아리스"
-        val script = lines.mapIndexed { index, line ->
+        val script = lines.flatMapIndexed { index, line ->
             val value = line.trim()
-            when {
-                value.startsWith("@:") -> "${index + 1}. 센세의 직접 대사/행동: ${value.removePrefix("@:").trim()}"
-                value.startsWith("@하나코:") -> "${index + 1}. ${activeName}의 대사/행동 지시: ${value.removePrefix("@하나코:").trim()}"
-                value.startsWith("@아리스:") -> "${index + 1}. 아리스의 대사/행동 지시: ${value.removePrefix("@아리스:").trim()}"
-                value.startsWith("@케이:") -> "${index + 1}. 케이의 대사/행동 지시: ${value.removePrefix("@케이:").trim()}"
-                else -> "${index + 1}. 센세의 직접 대사/행동: $value"
+            val repeatMatch = Regex("[×xX]([1-9][0-9]?)$").find(value)
+            val repeatCount = (repeatMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1).coerceAtMost(20)
+            val directive = if (repeatMatch != null) value.substring(0, repeatMatch.range.first).trim() else value
+            val description = when {
+                directive.startsWith("@:") -> "센세의 직접 대사/행동: ${directive.removePrefix("@:").trim()}"
+                directive.startsWith("@하나코:") -> "${activeName}의 대사/행동 지시: ${directive.removePrefix("@하나코:").trim()}"
+                directive.startsWith("@아리스:") -> "아리스의 대사/행동 지시: ${directive.removePrefix("@아리스:").trim()}"
+                directive.startsWith("@케이:") -> "케이의 대사/행동 지시: ${directive.removePrefix("@케이:").trim()}"
+                else -> "센세의 직접 대사/행동: $directive"
+            }
+            (1..repeatCount).map { repetition ->
+                "${index + 1}.${if (repeatCount > 1) " (반복 $repetition/$repeatCount)" else ""} $description"
             }
         }.joinToString("\n")
         return """
             [센세가 지정한 순서형 대본 — 반드시 순서 유지]
-            아래 항목을 위에서부터 순서대로 진행한다. '센세의 직접 대사/행동'은 센세가 한 말이나 행동으로 취급하고, 해당 내용에 캐릭터가 자연스럽게 반응한다. '대사/행동 지시'는 지정된 캐릭터가 실제로 말하거나 행동하도록 하되, 단순 복사하지 말고 캐릭터의 말투와 감정에 맞게 자연스럽게 살을 붙여 표현한다. 각 항목의 순서를 바꾸거나 생략하지 않는다. 행동 묘사는 *행동 묘사* 형식을 사용한다.
+            아래 항목을 위에서부터 순서대로 진행한다. '센세의 직접 대사/행동'은 센세가 한 말이나 행동으로 취급하고, 해당 내용에 캐릭터가 자연스럽게 반응한다. '대사/행동 지시'는 지정된 캐릭터가 실제로 말하거나 행동하도록 하되, 단순 복사하지 말고 캐릭터의 말투와 감정에 맞게 자연스럽게 살을 붙여 표현한다. 각 항목의 순서를 바꾸거나 생략하지 않는다. 행동 묘사는 *행동 묘사* 형식을 사용한다. 항목 끝에 ×N 또는 xN이 있으면 해당 대사/행동을 N회 반복하며, 각 반복을 순서대로 별도 출력한다.
             $script
         """.trimIndent()
     }
