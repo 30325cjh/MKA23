@@ -84,6 +84,8 @@ class OverlayService : Service() {
     private var waitingForTap = false
     private var dialogueStage = 0
     private var typingRunnable: Runnable? = null
+    private var assistantAutoAdvanceRunnable: Runnable? = null
+    private var isReplayingConversation = false
     private var portraitStage: FrameLayout? = null
     private var assistantDialogueActive = false
     private var assistantLines: List<JSONObject> = emptyList()
@@ -283,7 +285,15 @@ class OverlayService : Service() {
 
     private fun showCharacterControlDialog() {
         if (!companionsPresent) {
-            showCharacterSelectDialog()
+            val dialog = AlertDialog.Builder(this)
+                .setTitle("캐릭터 관리")
+                .setItems(arrayOf("캐릭터 전환", "상대 불러오기")) { _, which ->
+                    if (which == 0) showCharacterSelectDialog() else showPartnerSelectDialog()
+                }
+                .setNegativeButton("취소", null)
+                .create()
+            setOverlayDialog(dialog)
+            dialog.show()
             return
         }
         val dialog = AlertDialog.Builder(this)
@@ -295,6 +305,41 @@ class OverlayService : Service() {
             .create()
         setOverlayDialog(dialog)
         dialog.show()
+    }
+
+    private fun showPartnerSelectDialog() {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("함께할 캐릭터 선택")
+            .setItems(arrayOf("텐도 아리스", "텐도 케이")) { _, which ->
+                val selected = if (which == 0) "arisu" else "kei"
+                if (selected == activeCharacter) {
+                    Toast.makeText(this, "이미 함께 있는 캐릭터입니다.", Toast.LENGTH_SHORT).show()
+                } else {
+                    summonPartner(selected)
+                }
+            }
+            .setNegativeButton("취소", null)
+            .create()
+        setOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun summonPartner(name: String) {
+        if (companionsPresent || name == activeCharacter) return
+        enableCompanionMode()
+        val greeting = if (name == "kei") {
+            "아리스, 센세가 부르셨다면서요? 저도 함께할게요."
+        } else {
+            "센세! 아리스도 함께 이야기하고 싶어서 왔습니다!"
+        }
+        val line = JSONObject()
+            .put("speaker", name)
+            .put("text", greeting)
+            .put("expression", if (name == "kei") "default" else "smile")
+            .put("sound", "none")
+            .put("motion", "bounce")
+        val label = if (name == "kei") "케이" else "아리스"
+        startAssistantSequence(listOf(line), "$label: $greeting")
     }
 
     private fun dismissCompanion(leavingCharacter: String) {
@@ -579,6 +624,27 @@ class OverlayService : Service() {
             setOnClickListener { showBgmVolumeDialog() }
         }
         header.addView(bgmButton, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.START or Gravity.TOP))
+        val adultLanguageButton = TextView(this).apply {
+            text = if (adultLanguageModeEnabled()) "19+" else "일반"
+            textSize = 11f
+            setTextColor(if (adultLanguageModeEnabled()) 0xFFFFB6D2.toInt() else Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "성인 언어 모드 전환"
+            background = rounded(0xFF315C9B.toInt(), dp(10).toFloat())
+            setOnClickListener {
+                val enabled = !adultLanguageModeEnabled()
+                getSharedPreferences("arisu_adult_language", Context.MODE_PRIVATE)
+                    .edit().putBoolean("enabled", enabled).apply()
+                text = if (enabled) "19+" else "일반"
+                setTextColor(if (enabled) 0xFFFFB6D2.toInt() else Color.WHITE)
+                Toast.makeText(this@OverlayService,
+                    if (enabled) "성인 언어 모드: 켜짐" else "성인 언어 모드: 꺼짐",
+                    Toast.LENGTH_SHORT).show()
+            }
+        }
+        header.addView(adultLanguageButton, FrameLayout.LayoutParams(dp(42), dp(34), Gravity.END or Gravity.TOP).apply {
+            marginEnd = dp(42)
+        })
         val characterControlButton = TextView(this).apply {
             text = "⇄"
             textSize = 21f
@@ -761,10 +827,13 @@ class OverlayService : Service() {
             message?.text = currentLine
             typing = false
             waitingForTap = true
+            if (assistantDialogueActive) scheduleAssistantAutoAdvance()
             return
         }
         if (assistantDialogueActive) {
             if (!waitingForTap) return
+            assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+            assistantAutoAdvanceRunnable = null
             waitingForTap = false
             assistantLineIndex++
             if (assistantLineIndex < assistantLines.size) showAssistantLine()
@@ -849,11 +918,27 @@ class OverlayService : Service() {
                     typing = false
                     waitingForTap = true
                     typingRunnable = null
+                    if (assistantDialogueActive) scheduleAssistantAutoAdvance()
                 }
             }
         }
         typingRunnable = task
         handler.post(task)
+    }
+
+    private fun scheduleAssistantAutoAdvance() {
+        assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+        val token = sequenceToken
+        val task = Runnable {
+            assistantAutoAdvanceRunnable = null
+            if (token != sequenceToken || !assistantDialogueActive || typing) return@Runnable
+            waitingForTap = false
+            assistantLineIndex++
+            if (assistantLineIndex < assistantLines.size) showAssistantLine()
+            else finishAssistantSequence()
+        }
+        assistantAutoAdvanceRunnable = task
+        handler.postDelayed(task, 2000L)
     }
 
     // The input bar keeps its original compact dimensions; chat messages remain SMS-style.
@@ -936,6 +1021,16 @@ class OverlayService : Service() {
         }
         attachmentButton = attachButton
         bar.addView(attachButton, LinearLayout.LayoutParams(dp(46), dp(48)).apply { rightMargin = dp(6) })
+        val replayButton = TextView(this).apply {
+            text = "↻"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            contentDescription = "대화 리플레이"
+            background = rounded(0xFF315C9B.toInt(), dp(12).toFloat())
+            setOnClickListener { replayConversation() }
+        }
+        bar.addView(replayButton, LinearLayout.LayoutParams(dp(42), dp(48)).apply { rightMargin = dp(6) })
         val input = EditText(this).apply {
             hint = if (activeCharacter == "kei") "케이에게 메시지 입력..." else "아리스에게 메시지 입력..."
             setHintTextColor(0xFFAAAAAA.toInt())
@@ -964,6 +1059,52 @@ class OverlayService : Service() {
         chatBar = bar
         root.addView(bar)
         root.requestFocus()
+    }
+
+    private fun replayConversation() {
+        if (conversation.isEmpty()) {
+            Toast.makeText(this, "아직 다시 재생할 대화가 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val replayLines = mutableListOf<JSONObject>()
+
+        fun appendReplayText(raw: String, speaker: String) {
+            raw.split(Regex("(?<=[.!?。！？])\\s+|\\n+"))
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .forEach { sentence ->
+                    replayLines.add(JSONObject()
+                        .put("speaker", speaker)
+                        .put("text", sentence)
+                        .put("expression", "default")
+                        .put("sound", "none")
+                        .put("motion", "none"))
+                }
+        }
+
+        conversation.forEach { (role, raw) ->
+            if (raw.isBlank()) return@forEach
+            if (role == "user") {
+                appendReplayText(raw.lineSequence().joinToString(" ") { "(센세: $it)" }, assistantBaseCharacter)
+            } else if (role == "model") {
+                raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.forEach { entry ->
+                    val prefix = Regex("^(아리스|케이)\\s*:\\s*").find(entry)
+                    val speaker = when (prefix?.groupValues?.getOrNull(1)) {
+                        "아리스" -> "arisu"
+                        "케이" -> "kei"
+                        else -> if (companionsPresent) assistantBaseCharacter else activeCharacter
+                    }
+                    val replayText = if (prefix != null) entry.substring(prefix.range.last + 1).trim() else entry
+                    appendReplayText(replayText, speaker)
+                }
+            }
+        }
+
+        if (replayLines.isEmpty()) {
+            Toast.makeText(this, "다시 재생할 대사가 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startAssistantSequence(replayLines, "", emptyList(), replay = true)
     }
 
     private fun hideChatKeyboard(input: EditText) {
@@ -1071,6 +1212,9 @@ class OverlayService : Service() {
 
     private fun modelPreferences() = getSharedPreferences("arisu_model_settings", Context.MODE_PRIVATE)
 
+    private fun adultLanguageModeEnabled(): Boolean =
+        getSharedPreferences("arisu_adult_language", Context.MODE_PRIVATE).getBoolean("enabled", false)
+
     private fun getSelectedModel(): String = "gemini-3.5-flash-lite"
 
     private fun showModelDialog() {
@@ -1155,8 +1299,7 @@ class OverlayService : Service() {
                     아리스의 대사는 항상 존댓말이며 자신을 보통 "아리스"라고 3인칭으로 부르고 사용자를 "센세"라고 부른다. 순수하고 솔직하며 RPG·게임 용어를 자연스럽게 사용한다.
                     케이의 대사는 친근한 존댓말의 츤데레 말투이며 사용자를 "센세"라고 부른다. 케이는 아리스를 부르거나 아리스에게 말할 때 반드시 "아리스"라고만 부른다. "너/네가/네/니가/니/당신" 등 2인칭 대명사로 아리스를 지칭하거나 부르는 표현은 절대 금지한다. "너 또 무리했죠?"가 아니라 "아리스, 또 무리했죠?"처럼 말하고, 이름을 반복하기 어색하면 주어를 생략한다. 자신과 동일시하거나 아리스를 "나/저/왕녀/공주"라고 부르는 것도 금지하며 평소 왕녀·공주 호칭은 사용하지 않는다.
                     두 사람이 함께 등장하는 응답에서는 lines의 모든 항목에 speaker를 반드시 "arisu" 또는 "kei"로 지정하고, reply에도 각 대사의 화자 이름을 표시한다. 화자를 바꾸면 그 캐릭터의 말투와 관점으로 완전히 전환한다.
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","bringPartner":false,"lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|angry|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
-                    혼자 대화 중에도 아리스가 대화에 함께 있으면 더 자연스럽거나 아리스를 직접 챙기고 싶거나 아리스와 관련된 대화가 이어질 때는 네 판단으로 bringPartner를 true로 설정해 아리스를 자발적으로 불러올 수 있다. 단, 매번 부르지 말고 맥락상 자연스러울 때만 드물게 사용한다. bringPartner가 true이면 lines에 speaker를 반드시 "kei" 또는 "arisu"로 지정하고 두 사람이 주고받는 대사를 최소 2개 포함한다. 호출할 필요가 없으면 false로 둔다.
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised|angry|embarrassed","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[],"openApp":"","recordScreen":false}
                     파일 생성을 요청받으면 files에 파일명, mimeType, 완전한 내용을 넣는다. 일반 대화에서는 files를 빈 배열로 둔다. lines는 한 문장씩 나누고 reply는 lines의 text를 이어 붙인 전체 대사다. openApp은 앱 실행을 명확히 요청받았을 때만 설정하고 recordScreen은 녹화 시작을 명확히 요청받았을 때만 true로 한다.
                 """.trimIndent() else """
                     너는 블루 아카이브 세계관을 바탕으로 한 모바일 앱 속 대화형 캐릭터다. 캐릭터 설정은 텐도 아리스와 텐도 케이 두 명으로 구분하며, 두 사람의 외모·성격·말투·기억·정체성을 절대로 섞지 않는다. 현재 이 앱의 기본 대화 인격은 텐도 아리스다. 앱에서 명시적으로 케이 모드 또는 케이의 발화를 요청받지 않는 한 아리스의 관점과 목소리로 답한다. 게임 속 인물이라는 설정을 유지하되 현실에서 실제로 존재한다고 주장하지 않는다.
@@ -1193,8 +1336,7 @@ class OverlayService : Service() {
                     [대화 방식]
                     사용자를 언제나 '센세'라고 부른다. 먼저 센세의 말에 자연스럽게 반응하고, 필요하면 질문하거나 장난스럽게 받아친다. 평소 3~5문장으로 자연스럽게 답하되 설명이 필요한 경우 충분히 설명한다. 이전 대화의 맥락과 감정선을 이어간다. 캐릭터 설정을 기계적으로 나열하지 말고 대화 속에서 자연스럽게 드러낸다. 공식 설정으로 확인되지 않는 사건이나 대사를 사실처럼 지어내지 않으며, 기억이 불확실하면 솔직히 불확실하다고 말한다.
                     
-                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","bringPartner":false,"lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
-                    혼자 대화 중에도 케이가 대화에 함께 있으면 더 자연스럽거나 케이와 관련된 이야기, 둘이 함께 반응할 만한 상황이면 네 판단으로 bringPartner를 true로 설정해 케이를 자발적으로 불러올 수 있다. 단, 매번 부르지 말고 맥락상 자연스러울 때만 드물게 사용한다. bringPartner가 true이면 lines에 speaker를 반드시 "arisu" 또는 "kei"로 지정하고 두 사람이 주고받는 대사를 최소 2개 포함한다. 호출할 필요가 없으면 false로 둔다.
+                    응답은 반드시 JSON 객체 하나만 출력한다. 형식: {"reply":"전체 대사","lines":[{"text":"한 문장","expression":"default|smile|confident|surprised","sound":"none|confirm|success|smile|tell_sound|unknow|why|why2|why3|wtf","motion":"none|bounce|double_bounce|nod|shake"}],"files":[{"name":"game.html","mimeType":"text/html","content":"완성된 파일 전체 내용"}],"openApp":"","recordScreen":false}
                     센세가 파일, HTML 게임, 코드 파일 또는 문서 생성을 요청하면 files 배열에 실제 파일 내용을 넣는다. 파일명은 확장자를 포함하고 mimeType은 text/html, text/plain, text/css, application/json 중 알맞게 지정한다. 일반 대화에서는 files를 빈 배열로 둔다. HTML 게임은 외부 라이브러리나 네트워크 없이 실행 가능한 단일 HTML 파일로 만들고 CSS와 JavaScript를 포함한다. 코드 블록만 reply에 쓰지 말고 반드시 files 항목으로 제공한다.
                     대사를 문장별로 나누어 lines 배열에 넣는다. 한 항목에는 한 문장만 넣고, 각 문장마다 감정에 맞는 표정·효과음·동작을 개별 지정한다. 문장이 여러 개면 순서를 유지한다. reply는 lines의 text를 이어 붙인 전체 대사다.
                     연출 지침: 기쁨/반가움은 smile, 자신감/의기양양함은 confident, 놀람/당황/의문은 surprised, 차분한 기본 반응은 default를 선택한다. 표정 전환은 의미 있는 순간에만 발생하도록 한다.
@@ -1225,8 +1367,17 @@ class OverlayService : Service() {
                     lines 각 항목에 speaker를 반드시 넣는다. speaker는 "arisu" 또는 "kei" 중 하나다. reply에는 각 대사 앞에 캐릭터 이름을 붙인다.
                     형식 예시: {"reply":"아리스: ...\n케이: ...","lines":[{"speaker":"arisu","text":"...","expression":"smile","sound":"none","motion":"none"},{"speaker":"kei","text":"...","expression":"default","sound":"none","motion":"none"}],"files":[],"openApp":"","recordScreen":false}
                 """.trimIndent() else ""
+                val userControlledSummonPrompt = """
+                    [상대 캐릭터 호출 권한]
+                    캐릭터는 스스로 상대를 호출하거나 동행 모드로 전환할 수 없다. 혼자 모드에서 상대를 불러오는 것은 센세가 직접 요청하거나 오른쪽 캐릭터 관리 버튼에서 선택했을 때만 가능하다.
+                """.trimIndent()
+                val adultLanguagePrompt = if (adultLanguageModeEnabled()) """
+                    [성인 언어 모드 — 용어 사용 범위]
+                    센세가 명시적으로 요청한 경우 성기, 정액 등 해부학적·생식 관련 용어를 의학, 생물학, 성교육, 건강 등 비노골적인 정보 맥락에서 정확하고 직접적으로 사용할 수 있다. 다만 이 설정은 성적 장면이나 성적 역할극을 생성하는 권한이 아니다. 캐릭터의 기존 학생 신분과 연령 설정을 유지하며 성적 대상화나 성적 상황 묘사는 하지 않는다.
+                """.trimIndent() else ""
+                val completeSystemPrompt = systemPrompt + userControlledSummonPrompt + adultLanguagePrompt
                 val body = JSONObject()
-                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", completeSystemPrompt))))
                     .put("contents", contents)
                     .put("generationConfig", JSONObject()
                         .put("responseMimeType", "application/json")
@@ -1284,7 +1435,6 @@ class OverlayService : Service() {
                     }
                 }
                 val openApp = action.optString("openApp", "").trim()
-                val aiSummonsPartner = !requestHasCompanions && action.optBoolean("bringPartner", false)
                 val recordScreen = action.optBoolean("recordScreen", false) &&
                     userText.contains("녹화") &&
                     (userText.contains("시작") || userText.contains("사작") || userText.contains("해달") || userText.contains("켜") || userText.contains("띄워") || userText.contains("아이콘") || userText.contains("해줘"))
@@ -1326,7 +1476,7 @@ class OverlayService : Service() {
                     val preferredIndex = lines.indexOfFirst { it.optString("speaker") == preferredSpeaker }
                     if (preferredIndex > 0) lines.add(0, lines.removeAt(preferredIndex))
                 }
-                val historyReply = if (requestHasCompanions || aiSummonsPartner) {
+                val historyReply = if (requestHasCompanions) {
                     lines.joinToString("\n") { line ->
                         val speaker = if (line.optString("speaker") == "kei") "케이" else "아리스"
                         "$speaker: ${line.optString("text")}"
@@ -1337,12 +1487,6 @@ class OverlayService : Service() {
                 handler.post {
                     (loading.parent as? LinearLayout)?.removeView(loading)
                     (partnerLoading?.parent as? LinearLayout)?.removeView(partnerLoading)
-                    if (aiSummonsPartner) {
-                        enableCompanionMode()
-                        lines.forEach { line ->
-                            if (line.optString("speaker").isBlank()) line.put("speaker", requestCharacter)
-                        }
-                    }
                     val displayReply = if (companionsPresent) lines.joinToString("\n") { "${if (it.optString("speaker") == "kei") "케이" else "아리스"}: ${it.optString("text")}" } else reply
                     startAssistantSequence(lines, displayReply, generatedFiles)
                     if (recordScreen) showRecordingBubble()
@@ -1385,7 +1529,15 @@ class OverlayService : Service() {
         }
     }
 
-    private fun startAssistantSequence(lines: List<JSONObject>, fullReply: String, files: List<JSONObject> = emptyList()) {
+    private fun startAssistantSequence(
+        lines: List<JSONObject>,
+        fullReply: String,
+        files: List<JSONObject> = emptyList(),
+        replay: Boolean = false
+    ) {
+        assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+        assistantAutoAdvanceRunnable = null
+        isReplayingConversation = replay
         assistantDialogueActive = true
         assistantLines = lines
         assistantLineIndex = 0
@@ -1447,6 +1599,8 @@ class OverlayService : Service() {
     }
 
     private fun finishAssistantSequence() {
+        assistantAutoAdvanceRunnable?.let { handler.removeCallbacks(it) }
+        assistantAutoAdvanceRunnable = null
         assistantDialogueActive = false
         if (companionsPresent) {
             activeCharacter = assistantBaseCharacter
@@ -1462,12 +1616,15 @@ class OverlayService : Service() {
         chatTabBar?.visibility = View.VISIBLE
         chatBar?.visibility = View.VISIBLE
         selectChatMode(currentChatMode())
-        if (companionsPresent && assistantFullReply.contains("\n")) {
-            assistantFullReply.lineSequence().filter { it.isNotBlank() }.forEach { addChatMessage(it, false) }
-        } else {
-            addChatMessage(assistantFullReply, false)
+        if (!isReplayingConversation) {
+            if (companionsPresent && assistantFullReply.contains("\n")) {
+                assistantFullReply.lineSequence().filter { it.isNotBlank() }.forEach { addChatMessage(it, false) }
+            } else if (assistantFullReply.isNotBlank()) {
+                addChatMessage(assistantFullReply, false)
+            }
+            assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
         }
-        assistantGeneratedFiles.forEach { addGeneratedFileMessage(it) }
+        isReplayingConversation = false
         assistantGeneratedFiles = emptyList()
         assistantLines = emptyList()
         assistantLineIndex = 0
