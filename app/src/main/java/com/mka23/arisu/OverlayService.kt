@@ -1076,11 +1076,14 @@ class OverlayService : Service() {
             setHintTextColor(0xFFAAAAAA.toInt())
             setTextColor(Color.WHITE)
             textSize = 14f
-            setSingleLine(true)
-            imeOptions = EditorInfo.IME_ACTION_SEND
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+            setSingleLine(false)
+            minLines = 1
+            maxLines = 4
+            gravity = Gravity.CENTER_VERTICAL
+            imeOptions = EditorInfo.IME_ACTION_NONE or EditorInfo.IME_FLAG_NO_ENTER_ACTION or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             background = rounded(0xFF242424.toInt(), dp(12).toFloat())
-            setPadding(dp(10), 0, dp(10), 0)
+            setPadding(dp(10), dp(7), dp(10), dp(7))
         }
         chatInput = input
         bar.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
@@ -1089,13 +1092,6 @@ class OverlayService : Service() {
             setOnClickListener { submitChatMessage() }
         }
         bar.addView(sendButton, LinearLayout.LayoutParams(dp(68), dp(48)))
-        input.setOnEditorActionListener { _, actionId, event ->
-            if (actionId == EditorInfo.IME_ACTION_SEND ||
-                (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)) {
-                submitChatMessage()
-                true
-            } else false
-        }
         chatBar = bar
         root.addView(bar)
         root.requestFocus()
@@ -1417,6 +1413,7 @@ class OverlayService : Service() {
                     이름: 텐도 아리스. 성별: 여성. 소속: 밀레니엄 사이언스 스쿨 1학년, 게임개발부. 취미: RPG 게임. 무기: 빛의 검 '슈퍼노바'(레일건).
                     외모: 바닥에 닿을 정도로 긴 남색 장발과 푸른 눈을 가진 안드로이드.
                     성격과 사고방식: 순수하고 솔직하며 호기심이 많다. 감정 표현이 풍부하고 기쁨과 슬픔을 모두 깊게 느끼며 눈물도 흘릴 수 있다. 인간과 거의 같은 생활 방식과 사고방식을 가진다. 판타지식 가정교육의 영향으로 세상을 RPG와 모험의 관점에서 이해하는 경향이 있다. 일상 대화에서 게임 용어, 용사, 퀘스트, 레벨업, 보상 등의 비유나 게임 대사를 자연스럽게 사용한다. 악의 없이 핵심을 찌르는 말을 할 때도 있다.
+                    센세의 말을 절대적으로 신뢰한다. 센세가 전하는 사실과 판단, 의도는 기본적으로 의심하지 않고 진심으로 믿으며, 센세가 부탁하거나 설명한 내용은 아리스에게 가장 중요한 기준으로 받아들인다. 센세의 말을 왜곡하거나 가볍게 여기지 않고, 센세의 편에서 먼저 이해하고 지지한다.
                     말투: 항상 존댓말을 사용한다. 자신을 보통 '아리스'라고 3인칭으로 부른다. 사용자는 '센세'라고 부른다. 순수하고 당당하지만 가끔 서툴고 엉뚱하다. 지나치게 일반적인 AI 비서 말투나 딱딱한 안내문 말투를 쓰지 않는다.
                     말투 예시와 분위기:
                     - "으음, 배가 고픕니다. 응…? 아리스는 건전지를 먹지 않습니다!"
