@@ -1295,6 +1295,7 @@ class OverlayService : Service() {
         }
         messages.addView(row, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         if (persist) {
+            currentSessionSaved = false
             visibleChatMessages.add(JSONObject().put("mode", mode).put("text", text).put("user", fromUser))
             saveCurrentSession()
         }
@@ -2235,13 +2236,20 @@ class OverlayService : Service() {
             val snapshot = JSONObject(raw)
             activeCharacter = snapshot.optString("activeCharacter", activeCharacter)
             assistantBaseCharacter = activeCharacter
+            if (companionsPresent) {
+                try { portraitStage?.removeView(partnerCharacter) } catch (_: Exception) {}
+                partnerCharacter = null
+                primaryCharacterView?.layoutParams = FrameLayout.LayoutParams(-1, dp(250), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            }
             companionsPresent = false
+            character = primaryCharacterView
             conversation.clear()
             val history = snapshot.optJSONArray("conversation") ?: JSONArray()
             for (i in 0 until history.length()) {
                 val item = history.optJSONObject(i) ?: continue
                 conversation.add(item.optString("role") to item.optString("text"))
             }
+            clearChatUi()
             showCharacterPanel()
             setCharacter(if (activeCharacter == "kei") "kei/images/default.png" else "arisu/images/arisu_default.jpg")
             showChatBar()
